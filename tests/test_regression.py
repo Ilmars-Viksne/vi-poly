@@ -1,11 +1,12 @@
 """Tests for PolynomialRegressor and RegressionMetrics modules."""
 
 import unittest
+
 import numpy as np
 
-from polynomial_regression.regression import PolynomialRegressor
-from polynomial_regression.metrics import RegressionMetrics
 from polynomial_regression.features import PolynomialFeatureTransformer
+from polynomial_regression.metrics import RegressionMetrics
+from polynomial_regression.regression import PolynomialRegressor
 
 
 class TestRegression(unittest.TestCase):
@@ -13,9 +14,11 @@ class TestRegression(unittest.TestCase):
         # Noise-free quadratic synthetic data: y = 3 + 2x - 0.5x^2
         x = np.linspace(-5, 5, 50)
         true_beta = np.array([3.0, 2.0, -0.5])
-        y = true_beta[0] + true_beta[1] * x + true_beta[2] * (x ** 2)
+        y = true_beta[0] + true_beta[1] * x + true_beta[2] * (x**2)
 
-        X = PolynomialFeatureTransformer(degree=2, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=2, scale_features=False).fit_transform(
+            x
+        )
         regressor = PolynomialRegressor(l2_lambda=0.0).fit(X, y)
 
         np.testing.assert_allclose(regressor.beta, true_beta, atol=1e-10)
@@ -25,7 +28,9 @@ class TestRegression(unittest.TestCase):
         x = np.linspace(-1, 1, 20)
         y = 50.0 + 2.0 * x  # Shifted mean y = 50
 
-        X = PolynomialFeatureTransformer(degree=1, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=1, scale_features=False).fit_transform(
+            x
+        )
         # Large L2 lambda will shrink slope x coefficient, but intercept should remain ~50.0
         regressor = PolynomialRegressor(l2_lambda=1e6).fit(X, y)
 

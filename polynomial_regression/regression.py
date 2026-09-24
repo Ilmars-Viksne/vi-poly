@@ -2,7 +2,6 @@
 
 import warnings
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -31,12 +30,14 @@ class PolynomialRegressor:
         condition_warning_threshold: float = 1e12,
     ):
         if l2_lambda < 0.0:
-            raise ValueError(f"L2 regularization lambda must be >= 0.0, got {l2_lambda}.")
+            raise ValueError(
+                f"L2 regularization lambda must be >= 0.0, got {l2_lambda}."
+            )
         self.l2_lambda = l2_lambda
         self.condition_warning_threshold = condition_warning_threshold
 
-        self.beta: Optional[np.ndarray] = None
-        self.fit_details: Optional[ModelFitDetails] = None
+        self.beta: np.ndarray | None = None
+        self.fit_details: ModelFitDetails | None = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> "PolynomialRegressor":
         """Fits coefficient vector beta from design matrix X and target y.
@@ -108,13 +109,17 @@ class PolynomialRegressor:
             1D NumPy array of predictions.
         """
         if self.beta is None:
-            raise RuntimeError("Cannot predict with unfitted PolynomialRegressor. Call fit() first.")
+            raise RuntimeError(
+                "Cannot predict with unfitted PolynomialRegressor. Call fit() first."
+            )
 
         X = np.asarray(X, dtype=np.float64)
         predictions = X @ self.beta
 
         # Check for overflow / non-finite predictions
         if not np.all(np.isfinite(predictions)):
-            warnings.warn("Predictions contain non-finite values (NaN or Inf).", UserWarning)
+            warnings.warn(
+                "Predictions contain non-finite values (NaN or Inf).", UserWarning
+            )
 
         return predictions

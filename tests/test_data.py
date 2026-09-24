@@ -6,8 +6,8 @@ import unittest
 
 import numpy as np
 
-from polynomial_regression.data import CSVDataLoader
 from generate_data import generate_synthetic_data, save_to_csv
+from polynomial_regression.data import CSVDataLoader
 
 
 class TestCSVDataLoader(unittest.TestCase):
@@ -20,7 +20,9 @@ class TestCSVDataLoader(unittest.TestCase):
 
     def test_load_valid_csv(self):
         csv_file = self.temp_path / "valid.csv"
-        x, y = generate_synthetic_data(50, -5.0, 5.0, [1.0, 2.0], noise_std=0.1, seed=42)
+        x, y = generate_synthetic_data(
+            50, -5.0, 5.0, [1.0, 2.0], noise_std=0.1, seed=42
+        )
         save_to_csv(csv_file, x, y)
 
         loader = CSVDataLoader(csv_file, x_column="X", y_column="Y")

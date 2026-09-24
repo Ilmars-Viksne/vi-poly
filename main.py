@@ -1,41 +1,65 @@
 """Main CLI script for Polynomial Regression Workflows."""
 
 import argparse
-import sys
 import pathlib
-import warnings
-from typing import List, Optional, Any
+import sys
+from typing import Any
 
 import numpy as np
 
 from polynomial_regression.data import CSVDataLoader
-from polynomial_regression.splitting import DataSplitter, KFoldSplitter
-from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
 from polynomial_regression.features import PolynomialFeatureTransformer
+from polynomial_regression.metrics import RegressionMetrics
 from polynomial_regression.regression import PolynomialRegressor
-from polynomial_regression.metrics import EvaluationMetrics, RegressionMetrics
-from polynomial_regression.visualization import RegressionVisualizer
 from polynomial_regression.reporting import ReportGenerator
+from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
+from polynomial_regression.splitting import DataSplitter, KFoldSplitter
+from polynomial_regression.visualization import RegressionVisualizer
 
 
-def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
+def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Polynomial Regression pipeline using NumPy and Matplotlib."
     )
     # Data input options
     parser.add_argument("csv_file", type=str, help="Path to input CSV file.")
-    parser.add_argument("--x-column", type=str, default="X", help="Name of X column in CSV.")
-    parser.add_argument("--y-column", type=str, default="Y", help="Name of Y column in CSV.")
     parser.add_argument(
-        "--skip-invalid-rows", action="store_true", help="Skip rows with invalid/missing values instead of raising an error."
+        "--x-column", type=str, default="X", help="Name of X column in CSV."
+    )
+    parser.add_argument(
+        "--y-column", type=str, default="Y", help="Name of Y column in CSV."
+    )
+    parser.add_argument(
+        "--skip-invalid-rows",
+        action="store_true",
+        help="Skip rows with invalid/missing values instead of raising an error.",
     )
 
     # Split options
-    parser.add_argument("--train-ratio", type=float, default=0.70, help="Training set ratio (default: 0.70).")
-    parser.add_argument("--validation-ratio", type=float, default=0.15, help="Validation set ratio (default: 0.15).")
-    parser.add_argument("--test-ratio", type=float, default=0.15, help="Testing set ratio (default: 0.15).")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible splitting.")
-    parser.add_argument("--folds", type=int, default=5, help="Number of folds for K-fold CV.")
+    parser.add_argument(
+        "--train-ratio",
+        type=float,
+        default=0.70,
+        help="Training set ratio (default: 0.70).",
+    )
+    parser.add_argument(
+        "--validation-ratio",
+        type=float,
+        default=0.15,
+        help="Validation set ratio (default: 0.15).",
+    )
+    parser.add_argument(
+        "--test-ratio",
+        type=float,
+        default=0.15,
+        help="Testing set ratio (default: 0.15).",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for reproducible splitting."
+    )
+    parser.add_argument(
+        "--folds", type=int, default=5, help="Number of folds for K-fold CV."
+    )
 
     # Hyperparameter search space
     parser.add_argument(
@@ -53,7 +77,9 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         help="Candidate L2 regularization strengths.",
     )
     parser.add_argument(
-        "--scale-features", action="store_true", help="Opt-in to Z-score feature scaling for polynomial terms."
+        "--scale-features",
+        action="store_true",
+        help="Opt-in to Z-score feature scaling for polynomial terms.",
     )
 
     # Workflow mode
@@ -65,21 +91,73 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
     )
 
     # Visualizations
-    parser.add_argument("--output-dir", type=str, default="results", help="Directory to save numerical and plot outputs.")
-    parser.add_argument("--no-plots", action="store_true", help="Disable all plot generation.")
-    parser.add_argument("--show-plots", action="store_true", help="Display figures interactively after saving.")
-    parser.add_argument("--plot-format", choices=["png", "pdf", "svg"], default="png", help="Plot format.")
-    parser.add_argument("--plot-dpi", type=int, default=150, help="DPI resolution for raster plots.")
-    parser.add_argument("--plot-style", type=str, default=None, help="Matplotlib plot style.")
-    parser.add_argument("--curve-points", type=int, default=500, help="Number of points in dense X grid for plotting.")
-    parser.add_argument("--bootstrap-samples", type=int, default=0, help="Number of bootstrap samples for uncertainty band (0=disabled).")
-    parser.add_argument("--bootstrap-seed", type=int, default=123, help="Seed for bootstrap sampling.")
-    parser.add_argument("--residual-bins", type=int, default=None, help="Bin count for residual histogram.")
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="results",
+        help="Directory to save numerical and plot outputs.",
+    )
+    parser.add_argument(
+        "--no-plots", action="store_true", help="Disable all plot generation."
+    )
+    parser.add_argument(
+        "--show-plots",
+        action="store_true",
+        help="Display figures interactively after saving.",
+    )
+    parser.add_argument(
+        "--plot-format",
+        choices=["png", "pdf", "svg"],
+        default="png",
+        help="Plot format.",
+    )
+    parser.add_argument(
+        "--plot-dpi", type=int, default=150, help="DPI resolution for raster plots."
+    )
+    parser.add_argument(
+        "--plot-style", type=str, default=None, help="Matplotlib plot style."
+    )
+    parser.add_argument(
+        "--curve-points",
+        type=int,
+        default=500,
+        help="Number of points in dense X grid for plotting.",
+    )
+    parser.add_argument(
+        "--bootstrap-samples",
+        type=int,
+        default=0,
+        help="Number of bootstrap samples for uncertainty band (0=disabled).",
+    )
+    parser.add_argument(
+        "--bootstrap-seed", type=int, default=123, help="Seed for bootstrap sampling."
+    )
+    parser.add_argument(
+        "--residual-bins",
+        type=int,
+        default=None,
+        help="Bin count for residual histogram.",
+    )
 
     # Numerical robustness & tie-breaking
-    parser.add_argument("--condition-warning-threshold", type=float, default=1e12, help="Condition number warning threshold.")
-    parser.add_argument("--selection-rtol", type=float, default=1e-7, help="Relative tolerance for model selection tie-breaking.")
-    parser.add_argument("--selection-atol", type=float, default=1e-12, help="Absolute tolerance for model selection tie-breaking.")
+    parser.add_argument(
+        "--condition-warning-threshold",
+        type=float,
+        default=1e12,
+        help="Condition number warning threshold.",
+    )
+    parser.add_argument(
+        "--selection-rtol",
+        type=float,
+        default=1e-7,
+        help="Relative tolerance for model selection tie-breaking.",
+    )
+    parser.add_argument(
+        "--selection-atol",
+        type=float,
+        default=1e-12,
+        help="Absolute tolerance for model selection tie-breaking.",
+    )
 
     return parser.parse_args(args)
 
@@ -113,7 +191,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
         k_splitter = KFoldSplitter(k=args.folds, seed=args.seed)
         fold_splits = k_splitter.split(np.arange(len(split.dev_indices)))
         for fold in fold_splits:
-            kfold_assignments[f"fold_{fold.fold_index + 1}"] = split.dev_indices[fold.val_indices].tolist()
+            kfold_assignments[f"fold_{fold.fold_index + 1}"] = split.dev_indices[
+                fold.val_indices
+            ].tolist()
 
     # 3. Initialize Reporter and Visualizer
     reporter = ReportGenerator(output_path)
@@ -166,8 +246,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
             condition_warning_threshold=args.condition_warning_threshold,
         )
         holdout_res = holdout_selector.select(
-            x_all, y_all,
-            split.train_indices, split.val_indices, split.test_indices, split.dev_indices,
+            x_all,
+            y_all,
+            split.train_indices,
+            split.val_indices,
+            split.test_indices,
+            split.dev_indices,
         )
 
         reporter.write_holdout_results(holdout_res)
@@ -195,74 +279,154 @@ def run_pipeline(args: argparse.Namespace) -> None:
             best_deg = holdout_res.best_candidate.degree
             best_l2 = holdout_res.best_candidate.l2_lambda
 
-            visualizer.plot_04_holdout_validation_rmse(holdout_res.candidates, best_deg, best_l2)
-            visualizer.plot_05_train_validation_error(holdout_res.candidates, best_l2, best_deg)
-            visualizer.plot_06_holdout_rmse_heatmap(holdout_res.candidates, best_deg, best_l2)
+            visualizer.plot_04_holdout_validation_rmse(
+                holdout_res.candidates, best_deg, best_l2
+            )
+            visualizer.plot_05_train_validation_error(
+                holdout_res.candidates, best_l2, best_deg
+            )
+            visualizer.plot_06_holdout_rmse_heatmap(
+                holdout_res.candidates, best_deg, best_l2
+            )
 
             # Candidate Model Curves (min, mid, selected, max)
-            cand_degs = sorted(list({c.degree for c in holdout_res.candidates}))
-            select_degs = sorted(list(set([cand_degs[0], cand_degs[len(cand_degs) // 2], best_deg, cand_degs[-1]])))
+            cand_degs = sorted({c.degree for c in holdout_res.candidates})
+            select_degs = sorted(
+                {
+                            cand_degs[0],
+                            cand_degs[len(cand_degs) // 2],
+                            best_deg,
+                            cand_degs[-1],
+                        }
+            )
             cand_curves = []
             for cd in select_degs:
-                c_trans = PolynomialFeatureTransformer(degree=cd, scale_features=args.scale_features)
+                c_trans = PolynomialFeatureTransformer(
+                    degree=cd, scale_features=args.scale_features
+                )
                 X_tr = c_trans.fit_transform(x_all[split.train_indices])
-                c_reg = PolynomialRegressor(l2_lambda=best_l2).fit(X_tr, y_all[split.train_indices])
+                c_reg = PolynomialRegressor(l2_lambda=best_l2).fit(
+                    X_tr, y_all[split.train_indices]
+                )
                 X_g = c_trans.transform(x_grid)
                 cand_curves.append((cd, best_l2, x_grid, c_reg.predict(X_g)))
 
             visualizer.plot_07_candidate_models(
-                x_all[split.train_indices], y_all[split.train_indices],
-                x_all[split.val_indices], y_all[split.val_indices],
+                x_all[split.train_indices],
+                y_all[split.train_indices],
+                x_all[split.val_indices],
+                y_all[split.val_indices],
                 cand_curves,
             )
 
             # Final Fit & Diagnostic Plots
             X_grid_dev = holdout_res.final_refitted_transformer.transform(x_grid)
-            y_grid_pred = (X_grid_dev @ holdout_res.final_refitted_beta_scaled)
+            y_grid_pred = X_grid_dev @ holdout_res.final_refitted_beta_scaled
 
             visualizer.plot_13_final_polynomial_fit(
-                x_all[split.dev_indices], y_all[split.dev_indices],
-                x_all[split.test_indices], y_all[split.test_indices],
-                x_grid, y_grid_pred, best_deg, best_l2,
-                holdout_res.final_test_metrics, workflow="holdout"
+                x_all[split.dev_indices],
+                y_all[split.dev_indices],
+                x_all[split.test_indices],
+                y_all[split.test_indices],
+                x_grid,
+                y_grid_pred,
+                best_deg,
+                best_l2,
+                holdout_res.final_test_metrics,
+                workflow="holdout",
             )
 
             # Optional Bootstrap Band
             if args.bootstrap_samples > 0:
                 lower_b, upper_b = _compute_bootstrap_bands(
-                    x_all[split.dev_indices], y_all[split.dev_indices], x_grid,
-                    best_deg, best_l2, args.scale_features, args.bootstrap_samples, args.bootstrap_seed
+                    x_all[split.dev_indices],
+                    y_all[split.dev_indices],
+                    x_grid,
+                    best_deg,
+                    best_l2,
+                    args.scale_features,
+                    args.bootstrap_samples,
+                    args.bootstrap_seed,
                 )
                 visualizer.plot_13b_final_polynomial_bootstrap_band(
-                    x_all[split.dev_indices], y_all[split.dev_indices],
-                    x_all[split.test_indices], y_all[split.test_indices],
-                    x_grid, y_grid_pred, lower_b, upper_b,
-                    best_deg, best_l2, args.bootstrap_samples, workflow="holdout"
+                    x_all[split.dev_indices],
+                    y_all[split.dev_indices],
+                    x_all[split.test_indices],
+                    y_all[split.test_indices],
+                    x_grid,
+                    y_grid_pred,
+                    lower_b,
+                    upper_b,
+                    best_deg,
+                    best_l2,
+                    args.bootstrap_samples,
+                    workflow="holdout",
                 )
 
             visualizer.plot_14_test_actual_vs_predicted(
-                y_all[split.test_indices], holdout_res.test_predictions, holdout_res.final_test_metrics, workflow="holdout"
+                y_all[split.test_indices],
+                holdout_res.test_predictions,
+                holdout_res.final_test_metrics,
+                workflow="holdout",
             )
-            visualizer.plot_15_test_residuals(holdout_res.test_predictions, holdout_res.test_residuals, workflow="holdout")
-            visualizer.plot_16_test_residual_histogram(holdout_res.test_residuals, args.residual_bins, workflow="holdout")
-            visualizer.plot_17_final_metrics(holdout_res.final_test_metrics, workflow="holdout")
+            visualizer.plot_15_test_residuals(
+                holdout_res.test_predictions,
+                holdout_res.test_residuals,
+                workflow="holdout",
+            )
+            visualizer.plot_16_test_residual_histogram(
+                holdout_res.test_residuals, args.residual_bins, workflow="holdout"
+            )
+            visualizer.plot_17_final_metrics(
+                holdout_res.final_test_metrics, workflow="holdout"
+            )
             visualizer.plot_18_model_coefficients(
-                holdout_res.final_refitted_beta_orig if args.scale_features else holdout_res.final_refitted_beta_scaled,
-                is_original_basis=True, workflow="holdout"
+                holdout_res.final_refitted_beta_orig
+                if args.scale_features
+                else holdout_res.final_refitted_beta_scaled,
+                is_original_basis=True,
+                workflow="holdout",
             )
 
-            cond_degs = sorted(list({c.degree for c in holdout_res.candidates if c.l2_lambda == best_l2}))
-            cond_nums = [c.condition_number for c in holdout_res.candidates if c.l2_lambda == best_l2]
-            visualizer.plot_19_condition_numbers(cond_degs, cond_nums, args.condition_warning_threshold, workflow="holdout")
+            cond_degs = sorted(
+                {c.degree for c in holdout_res.candidates if c.l2_lambda == best_l2}
+            )
+            cond_nums = [
+                c.condition_number
+                for c in holdout_res.candidates
+                if c.l2_lambda == best_l2
+            ]
+            visualizer.plot_19_condition_numbers(
+                cond_degs,
+                cond_nums,
+                args.condition_warning_threshold,
+                workflow="holdout",
+            )
 
             visualizer.plot_20_results_dashboard(
-                x_all[split.dev_indices], y_all[split.dev_indices],
-                x_all[split.test_indices], y_all[split.test_indices],
-                x_grid, y_grid_pred, holdout_res.test_predictions, holdout_res.test_residuals,
-                holdout_res.candidates, best_deg, best_l2, holdout_res.final_test_metrics, workflow="holdout"
+                x_all[split.dev_indices],
+                y_all[split.dev_indices],
+                x_all[split.test_indices],
+                y_all[split.test_indices],
+                x_grid,
+                y_grid_pred,
+                holdout_res.test_predictions,
+                holdout_res.test_residuals,
+                holdout_res.candidates,
+                best_deg,
+                best_l2,
+                holdout_res.final_test_metrics,
+                workflow="holdout",
             )
 
-        summary_outputs.append(("Holdout", holdout_res.best_candidate.degree, holdout_res.best_candidate.l2_lambda, holdout_res.final_test_metrics))
+        summary_outputs.append(
+            (
+                "Holdout",
+                holdout_res.best_candidate.degree,
+                holdout_res.best_candidate.l2_lambda,
+                holdout_res.final_test_metrics,
+            )
+        )
 
     # --- KFOLD WORKFLOW ---
     if args.mode in ["kfold", "both"]:
@@ -323,65 +487,132 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
             visualizer.plot_08_kfold_assignments(split.dev_indices, dev_fold_splits)
             visualizer.plot_09_kfold_mean_rmse(kfold_res.candidates, best_deg, best_l2)
-            visualizer.plot_10_kfold_rmse_heatmap(kfold_res.candidates, best_deg, best_l2)
-            visualizer.plot_10b_kfold_rmse_std_heatmap(kfold_res.candidates, best_deg, best_l2)
+            visualizer.plot_10_kfold_rmse_heatmap(
+                kfold_res.candidates, best_deg, best_l2
+            )
+            visualizer.plot_10b_kfold_rmse_std_heatmap(
+                kfold_res.candidates, best_deg, best_l2
+            )
 
             sel_cand = kfold_res.best_candidate
             visualizer.plot_11_fold_metrics(
-                sel_cand.fold_results, sel_cand.mean_val_metrics.rmse,
-                sel_cand.std_val_metrics.rmse, best_deg, best_l2
+                sel_cand.fold_results,
+                sel_cand.mean_val_metrics.rmse,
+                sel_cand.std_val_metrics.rmse,
+                best_deg,
+                best_l2,
             )
 
             oof_metrics = RegressionMetrics.calculate(
-                y_all[split.dev_indices], kfold_res.oof_predictions, num_predictors=best_deg
+                y_all[split.dev_indices],
+                kfold_res.oof_predictions,
+                num_predictors=best_deg,
             )
-            visualizer.plot_12_out_of_fold_predictions(y_all[split.dev_indices], kfold_res.oof_predictions, oof_metrics)
+            visualizer.plot_12_out_of_fold_predictions(
+                y_all[split.dev_indices], kfold_res.oof_predictions, oof_metrics
+            )
 
             X_grid_dev = kfold_res.final_refitted_transformer.transform(x_grid)
             y_grid_pred = X_grid_dev @ kfold_res.final_refitted_beta_scaled
 
             visualizer.plot_13_final_polynomial_fit(
-                x_all[split.dev_indices], y_all[split.dev_indices],
-                x_all[split.test_indices], y_all[split.test_indices],
-                x_grid, y_grid_pred, best_deg, best_l2,
-                kfold_res.final_test_metrics, workflow="kfold"
+                x_all[split.dev_indices],
+                y_all[split.dev_indices],
+                x_all[split.test_indices],
+                y_all[split.test_indices],
+                x_grid,
+                y_grid_pred,
+                best_deg,
+                best_l2,
+                kfold_res.final_test_metrics,
+                workflow="kfold",
             )
 
             if args.bootstrap_samples > 0:
                 lower_b, upper_b = _compute_bootstrap_bands(
-                    x_all[split.dev_indices], y_all[split.dev_indices], x_grid,
-                    best_deg, best_l2, args.scale_features, args.bootstrap_samples, args.bootstrap_seed
+                    x_all[split.dev_indices],
+                    y_all[split.dev_indices],
+                    x_grid,
+                    best_deg,
+                    best_l2,
+                    args.scale_features,
+                    args.bootstrap_samples,
+                    args.bootstrap_seed,
                 )
                 visualizer.plot_13b_final_polynomial_bootstrap_band(
-                    x_all[split.dev_indices], y_all[split.dev_indices],
-                    x_all[split.test_indices], y_all[split.test_indices],
-                    x_grid, y_grid_pred, lower_b, upper_b,
-                    best_deg, best_l2, args.bootstrap_samples, workflow="kfold"
+                    x_all[split.dev_indices],
+                    y_all[split.dev_indices],
+                    x_all[split.test_indices],
+                    y_all[split.test_indices],
+                    x_grid,
+                    y_grid_pred,
+                    lower_b,
+                    upper_b,
+                    best_deg,
+                    best_l2,
+                    args.bootstrap_samples,
+                    workflow="kfold",
                 )
 
             visualizer.plot_14_test_actual_vs_predicted(
-                y_all[split.test_indices], kfold_res.test_predictions, kfold_res.final_test_metrics, workflow="kfold"
+                y_all[split.test_indices],
+                kfold_res.test_predictions,
+                kfold_res.final_test_metrics,
+                workflow="kfold",
             )
-            visualizer.plot_15_test_residuals(kfold_res.test_predictions, kfold_res.test_residuals, workflow="kfold")
-            visualizer.plot_16_test_residual_histogram(kfold_res.test_residuals, args.residual_bins, workflow="kfold")
-            visualizer.plot_17_final_metrics(kfold_res.final_test_metrics, workflow="kfold")
+            visualizer.plot_15_test_residuals(
+                kfold_res.test_predictions, kfold_res.test_residuals, workflow="kfold"
+            )
+            visualizer.plot_16_test_residual_histogram(
+                kfold_res.test_residuals, args.residual_bins, workflow="kfold"
+            )
+            visualizer.plot_17_final_metrics(
+                kfold_res.final_test_metrics, workflow="kfold"
+            )
             visualizer.plot_18_model_coefficients(
-                kfold_res.final_refitted_beta_orig if args.scale_features else kfold_res.final_refitted_beta_scaled,
-                is_original_basis=True, workflow="kfold"
+                kfold_res.final_refitted_beta_orig
+                if args.scale_features
+                else kfold_res.final_refitted_beta_scaled,
+                is_original_basis=True,
+                workflow="kfold",
             )
 
-            cond_degs = sorted(list({c.degree for c in kfold_res.candidates if c.l2_lambda == best_l2}))
-            cond_nums = [c.mean_condition_number for c in kfold_res.candidates if c.l2_lambda == best_l2]
-            visualizer.plot_19_condition_numbers(cond_degs, cond_nums, args.condition_warning_threshold, workflow="kfold")
+            cond_degs = sorted(
+                {c.degree for c in kfold_res.candidates if c.l2_lambda == best_l2}
+            )
+            cond_nums = [
+                c.mean_condition_number
+                for c in kfold_res.candidates
+                if c.l2_lambda == best_l2
+            ]
+            visualizer.plot_19_condition_numbers(
+                cond_degs, cond_nums, args.condition_warning_threshold, workflow="kfold"
+            )
 
             visualizer.plot_20_results_dashboard(
-                x_all[split.dev_indices], y_all[split.dev_indices],
-                x_all[split.test_indices], y_all[split.test_indices],
-                x_grid, y_grid_pred, kfold_res.test_predictions, kfold_res.test_residuals,
-                kfold_res.candidates, best_deg, best_l2, kfold_res.final_test_metrics, workflow="kfold"
+                x_all[split.dev_indices],
+                y_all[split.dev_indices],
+                x_all[split.test_indices],
+                y_all[split.test_indices],
+                x_grid,
+                y_grid_pred,
+                kfold_res.test_predictions,
+                kfold_res.test_residuals,
+                kfold_res.candidates,
+                best_deg,
+                best_l2,
+                kfold_res.final_test_metrics,
+                workflow="kfold",
             )
 
-        summary_outputs.append(("K-Fold", kfold_res.best_candidate.degree, kfold_res.best_candidate.l2_lambda, kfold_res.final_test_metrics))
+        summary_outputs.append(
+            (
+                "K-Fold",
+                kfold_res.best_candidate.degree,
+                kfold_res.best_candidate.l2_lambda,
+                kfold_res.final_test_metrics,
+            )
+        )
 
     # Write Manifest if plots generated
     if visualizer is not None:
@@ -409,7 +640,9 @@ def _compute_bootstrap_bands(
         boot_idx = rng.choice(n, size=n, replace=True)
         xb, yb = x_dev[boot_idx], y_dev[boot_idx]
 
-        transformer = PolynomialFeatureTransformer(degree=degree, scale_features=scale_features)
+        transformer = PolynomialFeatureTransformer(
+            degree=degree, scale_features=scale_features
+        )
         Xb = transformer.fit_transform(xb)
         regressor = PolynomialRegressor(l2_lambda=l2_lambda).fit(Xb, yb)
 
@@ -425,14 +658,16 @@ def _print_terminal_summary(
     args: argparse.Namespace,
     total_loaded: int,
     split: Any,
-    summary_outputs: List[tuple],
+    summary_outputs: list[tuple],
     output_path: pathlib.Path,
 ) -> None:
     print("=" * 70)
     print(" POLYNOMIAL REGRESSION PIPELINE SUMMARY")
     print("=" * 70)
     print(f"Loaded Observations: {total_loaded}")
-    print(f"Dataset Split Sizes: Train={len(split.train_indices)}, Val={len(split.val_indices)}, Test={len(split.test_indices)}")
+    print(
+        f"Dataset Split Sizes: Train={len(split.train_indices)}, Val={len(split.val_indices)}, Test={len(split.test_indices)}"
+    )
     print(f"Candidate Degrees:   {args.degrees}")
     print(f"Candidate L2 Values: {args.l2_values}")
     print(f"Feature Scaling:     {'Enabled' if args.scale_features else 'Disabled'}")
@@ -455,7 +690,7 @@ def main():
     args = parse_args()
     try:
         run_pipeline(args)
-    except Exception as e:
+    except (OSError, RuntimeError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

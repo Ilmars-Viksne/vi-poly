@@ -1,6 +1,7 @@
 """Tests for PolynomialFeatureTransformer module."""
 
 import unittest
+
 import numpy as np
 
 from polynomial_regression.features import PolynomialFeatureTransformer
@@ -12,11 +13,13 @@ class TestPolynomialFeatureTransformer(unittest.TestCase):
         transformer = PolynomialFeatureTransformer(degree=3, scale_features=False)
         X = transformer.transform(x)
 
-        expected = np.array([
-            [1.0, 1.0, 1.0, 1.0],
-            [1.0, 2.0, 4.0, 8.0],
-            [1.0, 3.0, 9.0, 27.0],
-        ])
+        expected = np.array(
+            [
+                [1.0, 1.0, 1.0, 1.0],
+                [1.0, 2.0, 4.0, 8.0],
+                [1.0, 3.0, 9.0, 27.0],
+            ]
+        )
         np.testing.assert_allclose(X, expected)
 
     def test_scaled_design_matrix(self):

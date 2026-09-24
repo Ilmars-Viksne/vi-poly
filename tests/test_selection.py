@@ -1,21 +1,26 @@
 """Tests for Holdout and KFold Model Selectors."""
 
 import unittest
-import numpy as np
 
-from polynomial_regression.splitting import DataSplitter
-from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
 from generate_data import generate_synthetic_data
+from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
+from polynomial_regression.splitting import DataSplitter
 
 
 class TestSelection(unittest.TestCase):
     def setUp(self):
         # Generate synthetic quadratic data: y = 2.0 - 3.0*x + 1.5*x^2 + noise
         self.x, self.y = generate_synthetic_data(
-            num_samples=100, x_min=-3.0, x_max=3.0,
-            coefficients=[2.0, -3.0, 1.5], noise_std=0.5, seed=42
+            num_samples=100,
+            x_min=-3.0,
+            x_max=3.0,
+            coefficients=[2.0, -3.0, 1.5],
+            noise_std=0.5,
+            seed=42,
         )
-        self.splitter = DataSplitter(train_ratio=0.70, val_ratio=0.15, test_ratio=0.15, seed=42)
+        self.splitter = DataSplitter(
+            train_ratio=0.70, val_ratio=0.15, test_ratio=0.15, seed=42
+        )
         self.split = self.splitter.split(len(self.x))
 
     def test_holdout_model_selection(self):
@@ -27,9 +32,12 @@ class TestSelection(unittest.TestCase):
             selection_atol=1e-12,
         )
         res = selector.select(
-            self.x, self.y,
-            self.split.train_indices, self.split.val_indices,
-            self.split.test_indices, self.split.dev_indices,
+            self.x,
+            self.y,
+            self.split.train_indices,
+            self.split.val_indices,
+            self.split.test_indices,
+            self.split.dev_indices,
         )
 
         # True degree is 2; selector should pick degree 2 (or low degree close to 2)
@@ -46,8 +54,7 @@ class TestSelection(unittest.TestCase):
             scale_features=True,
         )
         res = selector.select(
-            self.x, self.y,
-            self.split.dev_indices, self.split.test_indices
+            self.x, self.y, self.split.dev_indices, self.split.test_indices
         )
 
         self.assertIn(res.best_candidate.degree, [2, 3])
@@ -62,9 +69,12 @@ class TestSelection(unittest.TestCase):
             selection_rtol=1e-1,  # Large tolerance to force ties
         )
         res = selector.select(
-            self.x, self.y,
-            self.split.train_indices, self.split.val_indices,
-            self.split.test_indices, self.split.dev_indices,
+            self.x,
+            self.y,
+            self.split.train_indices,
+            self.split.val_indices,
+            self.split.test_indices,
+            self.split.dev_indices,
         )
         # With forced tie-breaking, should pick lowest degree (degree 1)
         # or highest L2 for that degree

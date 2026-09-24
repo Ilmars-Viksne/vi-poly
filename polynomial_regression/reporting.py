@@ -3,13 +3,12 @@
 import csv
 import json
 import pathlib
-from typing import Dict, List, Any, Optional
+from typing import Any
 
 import numpy as np
 
-from .data import LoadedData
-from .selection import HoldoutSelectionResult, KFoldSelectionResult
 from .metrics import EvaluationMetrics
+from .selection import HoldoutSelectionResult, KFoldSelectionResult
 
 
 class ReportGenerator:
@@ -30,8 +29,8 @@ class ReportGenerator:
         val_indices: np.ndarray,
         test_indices: np.ndarray,
         dev_indices: np.ndarray,
-        fold_assignments: Optional[Dict[int, List[int]]] = None,
-        skipped_rows: Optional[List[tuple]] = None,
+        fold_assignments: dict[int, list[int]] | None = None,
+        skipped_rows: list[tuple] | None = None,
     ) -> pathlib.Path:
         filepath = self.output_dir / "split_summary.json"
         summary = {
@@ -64,7 +63,9 @@ class ReportGenerator:
             json.dump(summary, f, indent=2)
         return filepath
 
-    def write_holdout_results(self, holdout_res: HoldoutSelectionResult) -> pathlib.Path:
+    def write_holdout_results(
+        self, holdout_res: HoldoutSelectionResult
+    ) -> pathlib.Path:
         filepath = self.output_dir / "holdout_results.csv"
         fieldnames = [
             "degree",
@@ -83,19 +84,21 @@ class ReportGenerator:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for cand in holdout_res.candidates:
-                writer.writerow({
-                    "degree": cand.degree,
-                    "l2_lambda": cand.l2_lambda,
-                    "train_mse": cand.train_metrics.mse,
-                    "train_rmse": cand.train_metrics.rmse,
-                    "train_mae": cand.train_metrics.mae,
-                    "train_r_squared": cand.train_metrics.r_squared,
-                    "val_mse": cand.val_metrics.mse,
-                    "val_rmse": cand.val_metrics.rmse,
-                    "val_mae": cand.val_metrics.mae,
-                    "val_r_squared": cand.val_metrics.r_squared,
-                    "condition_number": cand.condition_number,
-                })
+                writer.writerow(
+                    {
+                        "degree": cand.degree,
+                        "l2_lambda": cand.l2_lambda,
+                        "train_mse": cand.train_metrics.mse,
+                        "train_rmse": cand.train_metrics.rmse,
+                        "train_mae": cand.train_metrics.mae,
+                        "train_r_squared": cand.train_metrics.r_squared,
+                        "val_mse": cand.val_metrics.mse,
+                        "val_rmse": cand.val_metrics.rmse,
+                        "val_mae": cand.val_metrics.mae,
+                        "val_r_squared": cand.val_metrics.r_squared,
+                        "condition_number": cand.condition_number,
+                    }
+                )
         return filepath
 
     def write_kfold_results(
@@ -138,38 +141,42 @@ class ReportGenerator:
             writer.writeheader()
             for cand in kfold_res.candidates:
                 for fr in cand.fold_results:
-                    writer.writerow({
-                        "degree": cand.degree,
-                        "l2_lambda": cand.l2_lambda,
-                        "fold_number": fr.fold_index + 1,
-                        "train_mse": fr.train_metrics.mse,
-                        "train_rmse": fr.train_metrics.rmse,
-                        "train_mae": fr.train_metrics.mae,
-                        "train_r_squared": fr.train_metrics.r_squared,
-                        "val_mse": fr.val_metrics.mse,
-                        "val_rmse": fr.val_metrics.rmse,
-                        "val_mae": fr.val_metrics.mae,
-                        "val_r_squared": fr.val_metrics.r_squared,
-                        "condition_number": fr.condition_number,
-                    })
+                    writer.writerow(
+                        {
+                            "degree": cand.degree,
+                            "l2_lambda": cand.l2_lambda,
+                            "fold_number": fr.fold_index + 1,
+                            "train_mse": fr.train_metrics.mse,
+                            "train_rmse": fr.train_metrics.rmse,
+                            "train_mae": fr.train_metrics.mae,
+                            "train_r_squared": fr.train_metrics.r_squared,
+                            "val_mse": fr.val_metrics.mse,
+                            "val_rmse": fr.val_metrics.rmse,
+                            "val_mae": fr.val_metrics.mae,
+                            "val_r_squared": fr.val_metrics.r_squared,
+                            "condition_number": fr.condition_number,
+                        }
+                    )
 
         with open(summary_file, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=summary_fields)
             writer.writeheader()
             for cand in kfold_res.candidates:
-                writer.writerow({
-                    "degree": cand.degree,
-                    "l2_lambda": cand.l2_lambda,
-                    "mean_val_mse": cand.mean_val_metrics.mse,
-                    "mean_val_rmse": cand.mean_val_metrics.rmse,
-                    "mean_val_mae": cand.mean_val_metrics.mae,
-                    "mean_val_r_squared": cand.mean_val_metrics.r_squared,
-                    "std_val_mse": cand.std_val_metrics.mse,
-                    "std_val_rmse": cand.std_val_metrics.rmse,
-                    "std_val_mae": cand.std_val_metrics.mae,
-                    "std_val_r_squared": cand.std_val_metrics.r_squared,
-                    "mean_condition_number": cand.mean_condition_number,
-                })
+                writer.writerow(
+                    {
+                        "degree": cand.degree,
+                        "l2_lambda": cand.l2_lambda,
+                        "mean_val_mse": cand.mean_val_metrics.mse,
+                        "mean_val_rmse": cand.mean_val_metrics.rmse,
+                        "mean_val_mae": cand.mean_val_metrics.mae,
+                        "mean_val_r_squared": cand.mean_val_metrics.r_squared,
+                        "std_val_mse": cand.std_val_metrics.mse,
+                        "std_val_rmse": cand.std_val_metrics.rmse,
+                        "std_val_mae": cand.std_val_metrics.mae,
+                        "std_val_r_squared": cand.std_val_metrics.r_squared,
+                        "mean_condition_number": cand.mean_condition_number,
+                    }
+                )
 
         return fold_file, summary_file
 
@@ -241,13 +248,15 @@ class ReportGenerator:
             for orig_idx, xi, yi, pi, ri in zip(
                 original_indices, x_test, y_test, test_preds, test_residuals
             ):
-                writer.writerow({
-                    "original_csv_index": orig_idx,
-                    "X": xi,
-                    "actual_Y": yi,
-                    "predicted_Y": pi,
-                    "residual": ri,
-                })
+                writer.writerow(
+                    {
+                        "original_csv_index": orig_idx,
+                        "X": xi,
+                        "actual_Y": yi,
+                        "predicted_Y": pi,
+                        "residual": ri,
+                    }
+                )
 
         return filepath
 
@@ -281,18 +290,22 @@ class ReportGenerator:
                 oof_preds,
                 oof_residuals,
             ):
-                writer.writerow({
-                    "original_csv_index": orig_idx,
-                    "fold_number": fold_num,
-                    "X": xi,
-                    "actual_Y": yi,
-                    "oof_predicted_Y": pi,
-                    "residual": ri,
-                })
+                writer.writerow(
+                    {
+                        "original_csv_index": orig_idx,
+                        "fold_number": fold_num,
+                        "X": xi,
+                        "actual_Y": yi,
+                        "oof_predicted_Y": pi,
+                        "residual": ri,
+                    }
+                )
 
         return filepath
 
-    def write_plot_manifest(self, manifest_entries: List[Dict[str, Any]]) -> pathlib.Path:
+    def write_plot_manifest(
+        self, manifest_entries: list[dict[str, Any]]
+    ) -> pathlib.Path:
         filepath = self.output_dir / "plot_manifest.json"
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(manifest_entries, f, indent=2)

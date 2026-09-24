@@ -1,14 +1,13 @@
 """Model selection logic for Holdout and K-Fold cross-validation workflows."""
 
-from dataclasses import dataclass, field
-from typing import List, Tuple, Optional, Dict
+from dataclasses import dataclass
 
 import numpy as np
 
 from .features import PolynomialFeatureTransformer
+from .metrics import EvaluationMetrics, RegressionMetrics
 from .regression import PolynomialRegressor
-from .metrics import RegressionMetrics, EvaluationMetrics
-from .splitting import KFoldSplitter, FoldSplit
+from .splitting import KFoldSplitter
 
 
 @dataclass
@@ -29,7 +28,7 @@ class ModelCandidateResult:
 class HoldoutSelectionResult:
     """Summary result from Holdout model selection."""
 
-    candidates: List[ModelCandidateResult]
+    candidates: list[ModelCandidateResult]
     best_candidate: ModelCandidateResult
     final_refitted_beta_scaled: np.ndarray
     final_refitted_beta_orig: np.ndarray
@@ -55,7 +54,7 @@ class KFoldCandidateResult:
 
     degree: int
     l2_lambda: float
-    fold_results: List[FoldMetricsResult]
+    fold_results: list[FoldMetricsResult]
     mean_val_metrics: EvaluationMetrics
     std_val_metrics: EvaluationMetrics
     mean_condition_number: float
@@ -66,7 +65,7 @@ class KFoldCandidateResult:
 class KFoldSelectionResult:
     """Summary result from K-Fold model selection."""
 
-    candidates: List[KFoldCandidateResult]
+    candidates: list[KFoldCandidateResult]
     best_candidate: KFoldCandidateResult
     final_refitted_beta_scaled: np.ndarray
     final_refitted_beta_orig: np.ndarray
@@ -83,8 +82,8 @@ class HoldoutModelSelector:
 
     def __init__(
         self,
-        degrees: List[int],
-        l2_lambdas: List[float],
+        degrees: list[int],
+        l2_lambdas: list[float],
         scale_features: bool = False,
         selection_rtol: float = 1e-7,
         selection_atol: float = 1e-12,
@@ -111,7 +110,7 @@ class HoldoutModelSelector:
         x_test, y_test = x_all[test_idx], y_all[test_idx]
         x_dev, y_dev = x_all[dev_idx], y_all[dev_idx]
 
-        candidates: List[ModelCandidateResult] = []
+        candidates: list[ModelCandidateResult] = []
 
         for deg in self.degrees:
             for l2 in self.l2_lambdas:
@@ -129,14 +128,20 @@ class HoldoutModelSelector:
                 ).fit(X_train, y_train)
 
                 beta_scaled = regressor.beta
-                beta_orig = transformer.convert_coefficients_to_original_basis(beta_scaled)
+                beta_orig = transformer.convert_coefficients_to_original_basis(
+                    beta_scaled
+                )
 
                 # 3. Evaluate on TRAIN and VAL
                 pred_train = regressor.predict(X_train)
                 pred_val = regressor.predict(X_val)
 
-                train_metrics = RegressionMetrics.calculate(y_train, pred_train, num_predictors=deg)
-                val_metrics = RegressionMetrics.calculate(y_val, pred_val, num_predictors=deg)
+                train_metrics = RegressionMetrics.calculate(
+                    y_train, pred_train, num_predictors=deg
+                )
+                val_metrics = RegressionMetrics.calculate(
+                    y_val, pred_val, num_predictors=deg
+                )
 
                 cond_num = regressor.fit_details.condition_number
 
@@ -196,22 +201,26 @@ class HoldoutModelSelector:
         )
 
     def _select_best_candidate(
-        self, candidates: List[ModelCandidateResult]
+        self, candidates: list[ModelCandidateResult]
     ) -> ModelCandidateResult:
         best = candidates[0]
         for candidate in candidates[1:]:
             cand_rmse = candidate.val_metrics.rmse
             best_rmse = best.val_metrics.rmse
 
-            if np.isclose(cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol):
+            if np.isclose(
+                cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol
+            ):
                 # Tie-breaking logic:
                 # 1. Lower polynomial degree
                 if candidate.degree < best.degree:
                     best = candidate
-                elif candidate.degree == best.degree:
+                elif (
+                    candidate.degree == best.degree
+                    and candidate.l2_lambda > best.l2_lambda
+                ):
                     # 2. Larger L2 regularization strength
-                    if candidate.l2_lambda > best.l2_lambda:
-                        best = candidate
+                    best = candidate
             elif cand_rmse < best_rmse:
                 best = candidate
 
@@ -223,8 +232,8 @@ class KFoldModelSelector:
 
     def __init__(
         self,
-        degrees: List[int],
-        l2_lambdas: List[float],
+        degrees: list[int],
+        l2_lambdas: list[float],
         k_folds: int = 5,
         seed: int = 42,
         scale_features: bool = False,
@@ -256,11 +265,11 @@ class KFoldModelSelector:
         # Pass 0..len(dev_idx)-1 for internal fold splitting
         folds = splitter.split(np.arange(len(dev_idx)))
 
-        candidates: List[KFoldCandidateResult] = []
+        candidates: list[KFoldCandidateResult] = []
 
         for deg in self.degrees:
             for l2 in self.l2_lambdas:
-                fold_results: List[FoldMetricsResult] = []
+                fold_results: list[FoldMetricsResult] = []
                 oof_preds = np.zeros(len(dev_idx), dtype=np.float64)
 
                 fold_mses, fold_rmses, fold_maes, fold_r2s = [], [], [], []
@@ -290,8 +299,12 @@ class KFoldModelSelector:
 
                     oof_preds[f_val_idx] = pred_val
 
-                    f_train_metrics = RegressionMetrics.calculate(yf_train, pred_train, num_predictors=deg)
-                    f_val_metrics = RegressionMetrics.calculate(yf_val, pred_val, num_predictors=deg)
+                    f_train_metrics = RegressionMetrics.calculate(
+                        yf_train, pred_train, num_predictors=deg
+                    )
+                    f_val_metrics = RegressionMetrics.calculate(
+                        yf_val, pred_val, num_predictors=deg
+                    )
 
                     c_num = regressor.fit_details.condition_number
                     cond_nums.append(c_num)
@@ -382,19 +395,21 @@ class KFoldModelSelector:
         )
 
     def _select_best_candidate(
-        self, candidates: List[KFoldCandidateResult]
+        self, candidates: list[KFoldCandidateResult]
     ) -> KFoldCandidateResult:
         best = candidates[0]
         for candidate in candidates[1:]:
             cand_rmse = candidate.mean_val_metrics.rmse
             best_rmse = best.mean_val_metrics.rmse
 
-            if np.isclose(cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol):
-                if candidate.degree < best.degree:
+            if np.isclose(
+                cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol
+            ):
+                if candidate.degree < best.degree or (
+                    candidate.degree == best.degree
+                    and candidate.l2_lambda > best.l2_lambda
+                ):
                     best = candidate
-                elif candidate.degree == best.degree:
-                    if candidate.l2_lambda > best.l2_lambda:
-                        best = candidate
             elif cand_rmse < best_rmse:
                 best = candidate
 

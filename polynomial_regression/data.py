@@ -4,7 +4,6 @@ import csv
 import math
 import pathlib
 from dataclasses import dataclass, field
-from typing import List, Tuple, Union, Optional
 
 import numpy as np
 
@@ -16,7 +15,9 @@ class LoadedData:
     x: np.ndarray
     y: np.ndarray
     original_indices: np.ndarray
-    skipped_rows: List[Tuple[int, str, str]] = field(default_factory=list)  # (row_num, col, reason)
+    skipped_rows: list[tuple[int, str, str]] = field(
+        default_factory=list
+    )  # (row_num, col, reason)
 
 
 class CSVDataLoader:
@@ -24,7 +25,7 @@ class CSVDataLoader:
 
     def __init__(
         self,
-        filepath: Union[str, pathlib.Path],
+        filepath: str | pathlib.Path,
         x_column: str = "X",
         y_column: str = "Y",
         skip_invalid_rows: bool = False,
@@ -48,17 +49,19 @@ class CSVDataLoader:
         if not self.filepath.exists():
             raise FileNotFoundError(f"CSV file not found: {self.filepath}")
 
-        valid_x: List[float] = []
-        valid_y: List[float] = []
-        original_indices: List[int] = []
-        skipped_rows: List[Tuple[int, str, str]] = []
-        invalid_row_errors: List[str] = []
+        valid_x: list[float] = []
+        valid_y: list[float] = []
+        original_indices: list[int] = []
+        skipped_rows: list[tuple[int, str, str]] = []
+        invalid_row_errors: list[str] = []
 
         with open(self.filepath, mode="r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
 
             if reader.fieldnames is None:
-                raise ValueError(f"CSV file '{self.filepath}' is empty or header is missing.")
+                raise ValueError(
+                    f"CSV file '{self.filepath}' is empty or header is missing."
+                )
 
             fieldnames = [field.strip() if field else "" for field in reader.fieldnames]
 
@@ -122,7 +125,7 @@ class CSVDataLoader:
         )
 
     @staticmethod
-    def _parse_float(val_str: Optional[str]) -> Tuple[float, Optional[str]]:
+    def _parse_float(val_str: str | None) -> tuple[float, str | None]:
         if val_str is None or val_str.strip() == "":
             return 0.0, "Missing or empty value"
         try:

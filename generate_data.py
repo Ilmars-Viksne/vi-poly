@@ -3,7 +3,6 @@
 import argparse
 import csv
 import pathlib
-from typing import List
 
 import numpy as np
 
@@ -12,7 +11,7 @@ def generate_synthetic_data(
     num_samples: int,
     x_min: float,
     x_max: float,
-    coefficients: List[float],
+    coefficients: list[float],
     noise_std: float,
     seed: int,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -23,7 +22,7 @@ def generate_synthetic_data(
 
     y = np.zeros(num_samples, dtype=np.float64)
     for degree, beta in enumerate(coefficients):
-        y += beta * (x ** degree)
+        y += beta * (x**degree)
 
     if noise_std > 0:
         noise = rng.normal(loc=0.0, scale=noise_std, size=num_samples)
@@ -47,7 +46,11 @@ def main():
         description="Generate synthetic polynomial data with Gaussian noise."
     )
     parser.add_argument(
-        "--output", "-o", type=str, default="synthetic_data.csv", help="Output CSV file path"
+        "--output",
+        "-o",
+        type=str,
+        default="synthetic_data.csv",
+        help="Output CSV file path",
     )
     parser.add_argument(
         "--num-samples", "-n", type=int, default=200, help="Number of observations"
@@ -65,7 +68,9 @@ def main():
     parser.add_argument(
         "--noise-std", type=float, default=5.0, help="Gaussian noise standard deviation"
     )
-    parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument(
+        "--seed", type=int, default=42, help="Random seed for reproducibility"
+    )
 
     args = parser.parse_args()
 

@@ -3,11 +3,12 @@
 import pathlib
 import tempfile
 import unittest
+
 import numpy as np
 
-from polynomial_regression.visualization import RegressionVisualizer
-from polynomial_regression.reporting import ReportGenerator
 from polynomial_regression.metrics import EvaluationMetrics
+from polynomial_regression.reporting import ReportGenerator
+from polynomial_regression.visualization import RegressionVisualizer
 
 
 class TestVisualizationAndReporting(unittest.TestCase):
@@ -23,9 +24,15 @@ class TestVisualizationAndReporting(unittest.TestCase):
 
         # Split summary
         split_file = reporter.write_split_summary(
-            seed=42, train_ratio=0.7, val_ratio=0.15, test_ratio=0.15,
-            total_samples=100, train_indices=np.arange(70), val_indices=np.arange(70, 85),
-            test_indices=np.arange(85, 100), dev_indices=np.arange(85)
+            seed=42,
+            train_ratio=0.7,
+            val_ratio=0.15,
+            test_ratio=0.15,
+            total_samples=100,
+            train_indices=np.arange(70),
+            val_indices=np.arange(70, 85),
+            test_indices=np.arange(85, 100),
+            dev_indices=np.arange(85),
         )
         self.assertTrue(split_file.exists())
         self.assertGreater(split_file.stat().st_size, 0)
@@ -43,7 +50,7 @@ class TestVisualizationAndReporting(unittest.TestCase):
         )
 
         x = np.linspace(-5, 5, 20)
-        y = x ** 2 + np.random.randn(20)
+        y = x**2 + np.random.randn(20)
 
         plot_path = visualizer.plot_01_original_data(x, y)
 

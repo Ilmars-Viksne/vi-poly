@@ -1,8 +1,7 @@
 """Data splitting utilities for Holdout and K-Fold cross-validation."""
 
-from dataclasses import dataclass
 import math
-from typing import List, Tuple, Optional
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -74,8 +73,8 @@ class DataSplitter:
         shuffled_indices = rng.permutation(num_samples)
 
         # Allocate sizes
-        num_test = int(round(num_samples * self.test_ratio))
-        num_val = int(round(num_samples * self.val_ratio))
+        num_test = round(num_samples * self.test_ratio)
+        num_val = round(num_samples * self.val_ratio)
         num_train = num_samples - num_test - num_val
 
         # Ensure no split is empty
@@ -115,7 +114,7 @@ class KFoldSplitter:
         self.k = k
         self.seed = seed
 
-    def split(self, dev_indices: np.ndarray) -> List[FoldSplit]:
+    def split(self, dev_indices: np.ndarray) -> list[FoldSplit]:
         """Splits dev_indices into K folds.
 
         Args:
@@ -138,7 +137,7 @@ class KFoldSplitter:
         base_size = num_samples // self.k
         remainder = num_samples % self.k
 
-        folds_val_indices: List[np.ndarray] = []
+        folds_val_indices: list[np.ndarray] = []
         start = 0
         for i in range(self.k):
             fold_size = base_size + (1 if i < remainder else 0)
@@ -147,11 +146,13 @@ class KFoldSplitter:
             folds_val_indices.append(val_idx)
             start = end
 
-        fold_splits: List[FoldSplit] = []
+        fold_splits: list[FoldSplit] = []
         for i in range(self.k):
             val_idx = folds_val_indices[i]
             train_folds = [folds_val_indices[j] for j in range(self.k) if j != i]
-            train_idx = np.concatenate(train_folds) if train_folds else np.array([], dtype=int)
+            train_idx = (
+                np.concatenate(train_folds) if train_folds else np.array([], dtype=int)
+            )
 
             # Verification assertions
             assert len(set(train_idx).intersection(set(val_idx))) == 0

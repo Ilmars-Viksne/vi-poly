@@ -4,8 +4,8 @@ import pathlib
 import tempfile
 import unittest
 
-from main import parse_args, run_pipeline
 from generate_data import generate_synthetic_data, save_to_csv
+from main import parse_args, run_pipeline
 
 
 class TestEndToEndCLI(unittest.TestCase):
@@ -15,7 +15,9 @@ class TestEndToEndCLI(unittest.TestCase):
 
         # Generate synthetic CSV
         self.csv_file = self.temp_path / "test_data.csv"
-        x, y = generate_synthetic_data(100, -5.0, 5.0, [2.0, -1.0, 0.5], noise_std=0.2, seed=42)
+        x, y = generate_synthetic_data(
+            100, -5.0, 5.0, [2.0, -1.0, 0.5], noise_std=0.2, seed=42
+        )
         save_to_csv(self.csv_file, x, y)
 
     def tearDown(self):
@@ -23,14 +25,23 @@ class TestEndToEndCLI(unittest.TestCase):
 
     def test_end_to_end_holdout_mode(self):
         out_dir = self.temp_path / "results_holdout"
-        args = parse_args([
-            str(self.csv_file),
-            "--mode", "holdout",
-            "--degrees", "1", "2", "3",
-            "--l2-values", "0", "0.01",
-            "--output-dir", str(out_dir),
-            "--scale-features",
-        ])
+        args = parse_args(
+            [
+                str(self.csv_file),
+                "--mode",
+                "holdout",
+                "--degrees",
+                "1",
+                "2",
+                "3",
+                "--l2-values",
+                "0",
+                "0.01",
+                "--output-dir",
+                str(out_dir),
+                "--scale-features",
+            ]
+        )
         run_pipeline(args)
 
         self.assertTrue((out_dir / "split_summary.json").exists())
@@ -41,14 +52,23 @@ class TestEndToEndCLI(unittest.TestCase):
 
     def test_end_to_end_kfold_mode(self):
         out_dir = self.temp_path / "results_kfold"
-        args = parse_args([
-            str(self.csv_file),
-            "--mode", "kfold",
-            "--degrees", "1", "2",
-            "--l2-values", "0", "0.1",
-            "--folds", "3",
-            "--output-dir", str(out_dir),
-        ])
+        args = parse_args(
+            [
+                str(self.csv_file),
+                "--mode",
+                "kfold",
+                "--degrees",
+                "1",
+                "2",
+                "--l2-values",
+                "0",
+                "0.1",
+                "--folds",
+                "3",
+                "--output-dir",
+                str(out_dir),
+            ]
+        )
         run_pipeline(args)
 
         self.assertTrue((out_dir / "kfold_fold_results.csv").exists())
@@ -57,15 +77,25 @@ class TestEndToEndCLI(unittest.TestCase):
 
     def test_end_to_end_both_mode_with_bootstrap(self):
         out_dir = self.temp_path / "results_both"
-        args = parse_args([
-            str(self.csv_file),
-            "--mode", "both",
-            "--degrees", "1", "2",
-            "--l2-values", "0", "0.01",
-            "--folds", "3",
-            "--output-dir", str(out_dir),
-            "--bootstrap-samples", "10",
-        ])
+        args = parse_args(
+            [
+                str(self.csv_file),
+                "--mode",
+                "both",
+                "--degrees",
+                "1",
+                "2",
+                "--l2-values",
+                "0",
+                "0.01",
+                "--folds",
+                "3",
+                "--output-dir",
+                str(out_dir),
+                "--bootstrap-samples",
+                "10",
+            ]
+        )
         run_pipeline(args)
 
         self.assertTrue((out_dir / "13b_final_polynomial_bootstrap_band.png").exists())

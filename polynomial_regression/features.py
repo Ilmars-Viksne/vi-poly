@@ -1,7 +1,6 @@
 """Polynomial feature transformer and feature scaling module."""
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -11,7 +10,7 @@ class ScalingParameters:
     """Container for polynomial feature scaling statistics."""
 
     means: np.ndarray  # mean per polynomial degree (p >= 1)
-    stds: np.ndarray   # std per polynomial degree (p >= 1)
+    stds: np.ndarray  # std per polynomial degree (p >= 1)
 
 
 class PolynomialFeatureTransformer:
@@ -22,7 +21,7 @@ class PolynomialFeatureTransformer:
             raise ValueError(f"Polynomial degree must be >= 0, got {degree}.")
         self.degree = degree
         self.scale_features = scale_features
-        self.scaling_params: Optional[ScalingParameters] = None
+        self.scaling_params: ScalingParameters | None = None
 
     def fit(self, x: np.ndarray) -> "PolynomialFeatureTransformer":
         """Computes scaling parameters (means and stds) from x for degree >= 1.
@@ -42,13 +41,15 @@ class PolynomialFeatureTransformer:
         stds = np.ones(self.degree, dtype=np.float64)
 
         for p in range(1, self.degree + 1):
-            xp = x ** p
+            xp = x**p
             m = np.mean(xp)
             s = np.std(xp, ddof=0)
             means[p - 1] = m
             # Handle constant or near-zero standard deviation safely
             if s < 1e-15 or np.isnan(s):
-                stds[p - 1] = 1.0  # Avoid division by zero; (x^p - m)/1.0 = 0 if constant
+                stds[p - 1] = (
+                    1.0  # Avoid division by zero; (x^p - m)/1.0 = 0 if constant
+                )
             else:
                 stds[p - 1] = s
 
@@ -67,7 +68,7 @@ class PolynomialFeatureTransformer:
             2D NumPy array of shape (N, degree + 1).
         """
         x = np.asarray(x, dtype=np.float64)
-        N = len(x)
+        len(x)
 
         # Generate unscaled design matrix X_unscaled: shape (N, degree + 1)
         # x_p columns for p = 0, 1, ..., degree

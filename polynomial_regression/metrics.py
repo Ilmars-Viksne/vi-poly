@@ -1,7 +1,6 @@
 """Manual evaluation metrics for regression models."""
 
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -14,7 +13,7 @@ class EvaluationMetrics:
     rmse: float
     mae: float
     r_squared: float
-    adjusted_r_squared: Optional[float] = None
+    adjusted_r_squared: float | None = None
 
 
 class RegressionMetrics:
@@ -24,7 +23,7 @@ class RegressionMetrics:
     def calculate(
         y_true: np.ndarray,
         y_pred: np.ndarray,
-        num_predictors: Optional[int] = None,
+        num_predictors: int | None = None,
     ) -> EvaluationMetrics:
         """Calculates MSE, RMSE, MAE, R-squared, and optionally Adjusted R-squared.
 
@@ -42,7 +41,9 @@ class RegressionMetrics:
         y_pred = np.asarray(y_pred, dtype=np.float64)
 
         if len(y_true) != len(y_pred):
-            raise ValueError(f"Shape mismatch: y_true len ({len(y_true)}) != y_pred len ({len(y_pred)})")
+            raise ValueError(
+                f"Shape mismatch: y_true len ({len(y_true)}) != y_pred len ({len(y_pred)})"
+            )
 
         N = len(y_true)
         if N == 0:
@@ -50,13 +51,13 @@ class RegressionMetrics:
 
         residuals = y_true - y_pred
 
-        mse = float(np.mean(residuals ** 2))
+        mse = float(np.mean(residuals**2))
         rmse = float(np.sqrt(mse))
         mae = float(np.mean(np.abs(residuals)))
 
         # R-squared calculation
         # R2 = 1 - (SS_res / SS_tot)
-        ss_res = float(np.sum(residuals ** 2))
+        ss_res = float(np.sum(residuals**2))
         y_mean = float(np.mean(y_true))
         ss_tot = float(np.sum((y_true - y_mean) ** 2))
 
@@ -71,7 +72,7 @@ class RegressionMetrics:
 
         # Adjusted R-squared calculation
         # R2_adj = 1 - (1 - R2) * (N - 1) / (N - p - 1)
-        adj_r_squared: Optional[float] = None
+        adj_r_squared: float | None = None
         if num_predictors is not None:
             p = num_predictors
             if N > p + 1:

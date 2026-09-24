@@ -1,6 +1,7 @@
 """Tests for DataSplitter and KFoldSplitter modules."""
 
 import unittest
+
 import numpy as np
 
 from polynomial_regression.splitting import DataSplitter, KFoldSplitter
@@ -8,7 +9,9 @@ from polynomial_regression.splitting import DataSplitter, KFoldSplitter
 
 class TestDataSplitter(unittest.TestCase):
     def test_valid_holdout_split(self):
-        splitter = DataSplitter(train_ratio=0.70, val_ratio=0.15, test_ratio=0.15, seed=42)
+        splitter = DataSplitter(
+            train_ratio=0.70, val_ratio=0.15, test_ratio=0.15, seed=42
+        )
         num_samples = 100
         split = splitter.split(num_samples)
 
@@ -18,7 +21,9 @@ class TestDataSplitter(unittest.TestCase):
         self.assertEqual(len(split.dev_indices), 85)
 
         # Ensure no overlap
-        all_indices = np.concatenate([split.train_indices, split.val_indices, split.test_indices])
+        all_indices = np.concatenate(
+            [split.train_indices, split.val_indices, split.test_indices]
+        )
         self.assertEqual(len(set(all_indices)), num_samples)
         np.testing.assert_array_equal(np.sort(all_indices), np.arange(num_samples))
 
