@@ -1,0 +1,401 @@
+"""Model selection logic for Holdout and K-Fold cross-validation workflows."""
+
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional, Dict
+
+import numpy as np
+
+from .features import PolynomialFeatureTransformer
+from .regression import PolynomialRegressor
+from .metrics import RegressionMetrics, EvaluationMetrics
+from .splitting import KFoldSplitter, FoldSplit
+
+
+@dataclass
+class ModelCandidateResult:
+    """Evaluation result for a specific degree and L2 regularization strength."""
+
+    degree: int
+    l2_lambda: float
+    train_metrics: EvaluationMetrics
+    val_metrics: EvaluationMetrics
+    condition_number: float
+    beta_scaled: np.ndarray
+    beta_orig: np.ndarray
+    transformer: PolynomialFeatureTransformer
+
+
+@dataclass
+class HoldoutSelectionResult:
+    """Summary result from Holdout model selection."""
+
+    candidates: List[ModelCandidateResult]
+    best_candidate: ModelCandidateResult
+    final_refitted_beta_scaled: np.ndarray
+    final_refitted_beta_orig: np.ndarray
+    final_refitted_transformer: PolynomialFeatureTransformer
+    final_test_metrics: EvaluationMetrics
+    test_predictions: np.ndarray
+    test_residuals: np.ndarray
+
+
+@dataclass
+class FoldMetricsResult:
+    """Metrics for a single fold in K-Fold CV."""
+
+    fold_index: int
+    train_metrics: EvaluationMetrics
+    val_metrics: EvaluationMetrics
+    condition_number: float
+
+
+@dataclass
+class KFoldCandidateResult:
+    """Aggregate K-Fold CV evaluation result for a hyperparameter combination."""
+
+    degree: int
+    l2_lambda: float
+    fold_results: List[FoldMetricsResult]
+    mean_val_metrics: EvaluationMetrics
+    std_val_metrics: EvaluationMetrics
+    mean_condition_number: float
+    oof_predictions: np.ndarray  # Out-of-fold predictions in dev_indices order
+
+
+@dataclass
+class KFoldSelectionResult:
+    """Summary result from K-Fold model selection."""
+
+    candidates: List[KFoldCandidateResult]
+    best_candidate: KFoldCandidateResult
+    final_refitted_beta_scaled: np.ndarray
+    final_refitted_beta_orig: np.ndarray
+    final_refitted_transformer: PolynomialFeatureTransformer
+    final_test_metrics: EvaluationMetrics
+    test_predictions: np.ndarray
+    test_residuals: np.ndarray
+    oof_predictions: np.ndarray
+    oof_residuals: np.ndarray
+
+
+class HoldoutModelSelector:
+    """Evaluates candidate models on holdout train/val sets and refits on dev set."""
+
+    def __init__(
+        self,
+        degrees: List[int],
+        l2_lambdas: List[float],
+        scale_features: bool = False,
+        selection_rtol: float = 1e-7,
+        selection_atol: float = 1e-12,
+        condition_warning_threshold: float = 1e12,
+    ):
+        self.degrees = sorted(degrees)
+        self.l2_lambdas = l2_lambdas
+        self.scale_features = scale_features
+        self.selection_rtol = selection_rtol
+        self.selection_atol = selection_atol
+        self.condition_warning_threshold = condition_warning_threshold
+
+    def select(
+        self,
+        x_all: np.ndarray,
+        y_all: np.ndarray,
+        train_idx: np.ndarray,
+        val_idx: np.ndarray,
+        test_idx: np.ndarray,
+        dev_idx: np.ndarray,
+    ) -> HoldoutSelectionResult:
+        x_train, y_train = x_all[train_idx], y_all[train_idx]
+        x_val, y_val = x_all[val_idx], y_all[val_idx]
+        x_test, y_test = x_all[test_idx], y_all[test_idx]
+        x_dev, y_dev = x_all[dev_idx], y_all[dev_idx]
+
+        candidates: List[ModelCandidateResult] = []
+
+        for deg in self.degrees:
+            for l2 in self.l2_lambdas:
+                # 1. Transform features (fit scaling parameters on TRAIN only)
+                transformer = PolynomialFeatureTransformer(
+                    degree=deg, scale_features=self.scale_features
+                )
+                X_train = transformer.fit_transform(x_train)
+                X_val = transformer.transform(x_val)
+
+                # 2. Fit model on TRAIN set only
+                regressor = PolynomialRegressor(
+                    l2_lambda=l2,
+                    condition_warning_threshold=self.condition_warning_threshold,
+                ).fit(X_train, y_train)
+
+                beta_scaled = regressor.beta
+                beta_orig = transformer.convert_coefficients_to_original_basis(beta_scaled)
+
+                # 3. Evaluate on TRAIN and VAL
+                pred_train = regressor.predict(X_train)
+                pred_val = regressor.predict(X_val)
+
+                train_metrics = RegressionMetrics.calculate(y_train, pred_train, num_predictors=deg)
+                val_metrics = RegressionMetrics.calculate(y_val, pred_val, num_predictors=deg)
+
+                cond_num = regressor.fit_details.condition_number
+
+                candidates.append(
+                    ModelCandidateResult(
+                        degree=deg,
+                        l2_lambda=l2,
+                        train_metrics=train_metrics,
+                        val_metrics=val_metrics,
+                        condition_number=cond_num,
+                        beta_scaled=beta_scaled,
+                        beta_orig=beta_orig,
+                        transformer=transformer,
+                    )
+                )
+
+        # 4. Select best candidate model with tie-breaking rules
+        best_candidate = self._select_best_candidate(candidates)
+
+        # 5. Refit selected model on combined DEVELOPMENT data (train + val)
+        refitted_transformer = PolynomialFeatureTransformer(
+            degree=best_candidate.degree, scale_features=self.scale_features
+        )
+        X_dev = refitted_transformer.fit_transform(x_dev)
+        refitted_regressor = PolynomialRegressor(
+            l2_lambda=best_candidate.l2_lambda,
+            condition_warning_threshold=self.condition_warning_threshold,
+        ).fit(X_dev, y_dev)
+
+        final_beta_scaled = refitted_regressor.beta
+        final_beta_orig = refitted_transformer.convert_coefficients_to_original_basis(
+            final_beta_scaled
+        )
+
+        # Verify coefficient conversion
+        PolynomialFeatureTransformer.verify_coefficient_conversion(
+            x_dev, refitted_transformer, final_beta_scaled, final_beta_orig
+        )
+
+        # 6. Evaluate once on untouched TEST set
+        X_test = refitted_transformer.transform(x_test)
+        test_pred = refitted_regressor.predict(X_test)
+        test_metrics = RegressionMetrics.calculate(
+            y_test, test_pred, num_predictors=best_candidate.degree
+        )
+        test_residuals = y_test - test_pred  # actual - predicted
+
+        return HoldoutSelectionResult(
+            candidates=candidates,
+            best_candidate=best_candidate,
+            final_refitted_beta_scaled=final_beta_scaled,
+            final_refitted_beta_orig=final_beta_orig,
+            final_refitted_transformer=refitted_transformer,
+            final_test_metrics=test_metrics,
+            test_predictions=test_pred,
+            test_residuals=test_residuals,
+        )
+
+    def _select_best_candidate(
+        self, candidates: List[ModelCandidateResult]
+    ) -> ModelCandidateResult:
+        best = candidates[0]
+        for candidate in candidates[1:]:
+            cand_rmse = candidate.val_metrics.rmse
+            best_rmse = best.val_metrics.rmse
+
+            if np.isclose(cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol):
+                # Tie-breaking logic:
+                # 1. Lower polynomial degree
+                if candidate.degree < best.degree:
+                    best = candidate
+                elif candidate.degree == best.degree:
+                    # 2. Larger L2 regularization strength
+                    if candidate.l2_lambda > best.l2_lambda:
+                        best = candidate
+            elif cand_rmse < best_rmse:
+                best = candidate
+
+        return best
+
+
+class KFoldModelSelector:
+    """Evaluates candidate models using K-Fold cross validation on development data."""
+
+    def __init__(
+        self,
+        degrees: List[int],
+        l2_lambdas: List[float],
+        k_folds: int = 5,
+        seed: int = 42,
+        scale_features: bool = False,
+        selection_rtol: float = 1e-7,
+        selection_atol: float = 1e-12,
+        condition_warning_threshold: float = 1e12,
+    ):
+        self.degrees = sorted(degrees)
+        self.l2_lambdas = l2_lambdas
+        self.k_folds = k_folds
+        self.seed = seed
+        self.scale_features = scale_features
+        self.selection_rtol = selection_rtol
+        self.selection_atol = selection_atol
+        self.condition_warning_threshold = condition_warning_threshold
+
+    def select(
+        self,
+        x_all: np.ndarray,
+        y_all: np.ndarray,
+        dev_idx: np.ndarray,
+        test_idx: np.ndarray,
+    ) -> KFoldSelectionResult:
+        x_dev, y_dev = x_all[dev_idx], y_all[dev_idx]
+        x_test, y_test = x_all[test_idx], y_all[test_idx]
+
+        # 1. Create fold splits on dev_indices
+        splitter = KFoldSplitter(k=self.k_folds, seed=self.seed)
+        # Pass 0..len(dev_idx)-1 for internal fold splitting
+        folds = splitter.split(np.arange(len(dev_idx)))
+
+        candidates: List[KFoldCandidateResult] = []
+
+        for deg in self.degrees:
+            for l2 in self.l2_lambdas:
+                fold_results: List[FoldMetricsResult] = []
+                oof_preds = np.zeros(len(dev_idx), dtype=np.float64)
+
+                fold_mses, fold_rmses, fold_maes, fold_r2s = [], [], [], []
+                cond_nums = []
+
+                for fold in folds:
+                    f_train_idx = fold.train_indices
+                    f_val_idx = fold.val_indices
+
+                    xf_train, yf_train = x_dev[f_train_idx], y_dev[f_train_idx]
+                    xf_val, yf_val = x_dev[f_val_idx], y_dev[f_val_idx]
+
+                    # Fit scaling parameters inside fold training partition ONLY
+                    transformer = PolynomialFeatureTransformer(
+                        degree=deg, scale_features=self.scale_features
+                    )
+                    Xf_train = transformer.fit_transform(xf_train)
+                    Xf_val = transformer.transform(xf_val)
+
+                    regressor = PolynomialRegressor(
+                        l2_lambda=l2,
+                        condition_warning_threshold=self.condition_warning_threshold,
+                    ).fit(Xf_train, yf_train)
+
+                    pred_train = regressor.predict(Xf_train)
+                    pred_val = regressor.predict(Xf_val)
+
+                    oof_preds[f_val_idx] = pred_val
+
+                    f_train_metrics = RegressionMetrics.calculate(yf_train, pred_train, num_predictors=deg)
+                    f_val_metrics = RegressionMetrics.calculate(yf_val, pred_val, num_predictors=deg)
+
+                    c_num = regressor.fit_details.condition_number
+                    cond_nums.append(c_num)
+
+                    fold_results.append(
+                        FoldMetricsResult(
+                            fold_index=fold.fold_index,
+                            train_metrics=f_train_metrics,
+                            val_metrics=f_val_metrics,
+                            condition_number=c_num,
+                        )
+                    )
+
+                    fold_mses.append(f_val_metrics.mse)
+                    fold_rmses.append(f_val_metrics.rmse)
+                    fold_maes.append(f_val_metrics.mae)
+                    fold_r2s.append(f_val_metrics.r_squared)
+
+                # Mean and std across folds
+                mean_val_metrics = EvaluationMetrics(
+                    mse=float(np.mean(fold_mses)),
+                    rmse=float(np.mean(fold_rmses)),
+                    mae=float(np.mean(fold_maes)),
+                    r_squared=float(np.mean(fold_r2s)),
+                )
+                std_val_metrics = EvaluationMetrics(
+                    mse=float(np.std(fold_mses, ddof=0)),
+                    rmse=float(np.std(fold_rmses, ddof=0)),
+                    mae=float(np.std(fold_maes, ddof=0)),
+                    r_squared=float(np.std(fold_r2s, ddof=0)),
+                )
+
+                candidates.append(
+                    KFoldCandidateResult(
+                        degree=deg,
+                        l2_lambda=l2,
+                        fold_results=fold_results,
+                        mean_val_metrics=mean_val_metrics,
+                        std_val_metrics=std_val_metrics,
+                        mean_condition_number=float(np.mean(cond_nums)),
+                        oof_predictions=oof_preds,
+                    )
+                )
+
+        # 2. Select best hyperparameter combination
+        best_candidate = self._select_best_candidate(candidates)
+
+        # 3. Refit selected model on full DEVELOPMENT set
+        refitted_transformer = PolynomialFeatureTransformer(
+            degree=best_candidate.degree, scale_features=self.scale_features
+        )
+        X_dev = refitted_transformer.fit_transform(x_dev)
+        refitted_regressor = PolynomialRegressor(
+            l2_lambda=best_candidate.l2_lambda,
+            condition_warning_threshold=self.condition_warning_threshold,
+        ).fit(X_dev, y_dev)
+
+        final_beta_scaled = refitted_regressor.beta
+        final_beta_orig = refitted_transformer.convert_coefficients_to_original_basis(
+            final_beta_scaled
+        )
+
+        PolynomialFeatureTransformer.verify_coefficient_conversion(
+            x_dev, refitted_transformer, final_beta_scaled, final_beta_orig
+        )
+
+        # 4. Evaluate on untouched TEST set
+        X_test = refitted_transformer.transform(x_test)
+        test_pred = refitted_regressor.predict(X_test)
+        test_metrics = RegressionMetrics.calculate(
+            y_test, test_pred, num_predictors=best_candidate.degree
+        )
+        test_residuals = y_test - test_pred
+
+        oof_residuals = y_dev - best_candidate.oof_predictions
+
+        return KFoldSelectionResult(
+            candidates=candidates,
+            best_candidate=best_candidate,
+            final_refitted_beta_scaled=final_beta_scaled,
+            final_refitted_beta_orig=final_beta_orig,
+            final_refitted_transformer=refitted_transformer,
+            final_test_metrics=test_metrics,
+            test_predictions=test_pred,
+            test_residuals=test_residuals,
+            oof_predictions=best_candidate.oof_predictions,
+            oof_residuals=oof_residuals,
+        )
+
+    def _select_best_candidate(
+        self, candidates: List[KFoldCandidateResult]
+    ) -> KFoldCandidateResult:
+        best = candidates[0]
+        for candidate in candidates[1:]:
+            cand_rmse = candidate.mean_val_metrics.rmse
+            best_rmse = best.mean_val_metrics.rmse
+
+            if np.isclose(cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol):
+                if candidate.degree < best.degree:
+                    best = candidate
+                elif candidate.degree == best.degree:
+                    if candidate.l2_lambda > best.l2_lambda:
+                        best = candidate
+            elif cand_rmse < best_rmse:
+                best = candidate
+
+        return best
