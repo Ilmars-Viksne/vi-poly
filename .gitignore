@@ -72,6 +72,3 @@ venv.bak/
 # Files to be ignored
 .DS_Store
 Thumbs.db
-
-# Ignore the data file (assuming it contains sensitive or large data)
-polynomial_data.csv
