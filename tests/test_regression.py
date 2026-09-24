@@ -3,6 +3,7 @@
 import unittest
 
 import numpy as np
+import pytest
 
 from polynomial_regression.features import PolynomialFeatureTransformer
 from polynomial_regression.metrics import RegressionMetrics
@@ -43,6 +44,7 @@ class TestRegression(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             regressor.predict(np.ones((5, 2)))
 
+    @pytest.mark.filterwarnings("ignore:Design matrix condition number.*:UserWarning")
     def test_singular_matrix_fallback(self):
         # Create design matrix with identical duplicate columns
         X_singular = np.ones((10, 3))
