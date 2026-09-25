@@ -6,22 +6,43 @@ import numpy as np
 
 from .features import DEFAULT_MAX_DEGREE, PolynomialFeatureTransformer
 from .metrics import EvaluationMetrics, RegressionMetrics
-from .regression import ModelFitDetails, PolynomialRegressor
+from .regression import (
+    DEFAULT_L1_INITIALIZATION,
+    DEFAULT_L1_MAX_ITERATIONS,
+    DEFAULT_L1_TOLERANCE,
+    DEFAULT_REGULARIZATION_STRENGTHS,
+    REGULARIZATION_L2,
+    REGULARIZATION_NONE,
+    SUPPORTED_REGULARIZATIONS,
+    ModelFitDetails,
+    PolynomialRegressor,
+)
 from .splitting import KFoldSplitter
 
 
 @dataclass
 class ModelCandidateResult:
-    """Evaluation result for a specific degree and L2 regularization strength."""
+    """Evaluation result for a specific degree and regularization configuration."""
 
     degree: int
-    l2_lambda: float
+    regularization: str
+    regularization_strength: float
     train_metrics: EvaluationMetrics
     val_metrics: EvaluationMetrics
     condition_number: float
     beta_scaled: np.ndarray
     beta_orig: np.ndarray
     transformer: PolynomialFeatureTransformer
+    solver_used: str
+    converged: bool | None
+    iterations: int | None
+    nonzero_coefficient_count: int
+
+    @property
+    def l2_lambda(self) -> float:
+        if self.regularization != REGULARIZATION_L2:
+            raise AttributeError("l2_lambda is available only for L2 candidates.")
+        return self.regularization_strength
 
 
 @dataclass
@@ -47,6 +68,9 @@ class FoldMetricsResult:
     train_metrics: EvaluationMetrics
     val_metrics: EvaluationMetrics
     condition_number: float
+    converged: bool | None
+    iterations: int | None
+    nonzero_coefficient_count: int
 
 
 @dataclass
@@ -54,12 +78,24 @@ class KFoldCandidateResult:
     """Aggregate K-Fold CV evaluation result for a hyperparameter combination."""
 
     degree: int
-    l2_lambda: float
+    regularization: str
+    regularization_strength: float
     fold_results: list[FoldMetricsResult]
     mean_val_metrics: EvaluationMetrics
     std_val_metrics: EvaluationMetrics
     mean_condition_number: float
     oof_predictions: np.ndarray  # Out-of-fold predictions in dev_indices order
+    converged_fold_count: int
+    mean_iterations: float | None
+    max_iterations: int | None
+    mean_nonzero_coefficient_count: float
+    converged: bool
+
+    @property
+    def l2_lambda(self) -> float:
+        if self.regularization != REGULARIZATION_L2:
+            raise AttributeError("l2_lambda is available only for L2 candidates.")
+        return self.regularization_strength
 
 
 @dataclass
@@ -80,12 +116,14 @@ class KFoldSelectionResult:
 
 
 def _validate_hyperparameters(
-    degrees: list[int], l2_lambdas: list[float], max_degree: int
+    degrees: list[int],
+    regularization_strengths: list[float],
+    max_degree: int,
 ) -> tuple[list[int], list[float]]:
     if not degrees:
         raise ValueError("Candidate degrees list must not be empty.")
-    if not l2_lambdas:
-        raise ValueError("Candidate L2 lambdas list must not be empty.")
+    if not regularization_strengths:
+        raise ValueError("Candidate regularization strengths list must not be empty.")
 
     validated_degrees = []
     for deg in degrees:
@@ -98,19 +136,21 @@ def _validate_hyperparameters(
             )
         validated_degrees.append(d_int)
 
-    validated_l2 = []
-    for l2 in l2_lambdas:
+    validated_strengths = []
+    for str_val in regularization_strengths:
         try:
-            l2_val = float(l2)
+            val = float(str_val)
         except (ValueError, TypeError) as exc:
-            raise ValueError(f"L2 lambda must be numeric, got {l2}.") from exc
-        if not np.isfinite(l2_val) or l2_val < 0.0:
             raise ValueError(
-                f"L2 lambda must be finite and non-negative, got {l2_val}."
+                f"Regularization strength must be numeric, got {str_val}."
+            ) from exc
+        if not np.isfinite(val) or val < 0.0:
+            raise ValueError(
+                f"Regularization strength must be finite and non-negative, got {val}."
             )
-        validated_l2.append(l2_val)
+        validated_strengths.append(val)
 
-    return sorted(set(validated_degrees)), sorted(set(validated_l2))
+    return sorted(set(validated_degrees)), sorted(set(validated_strengths))
 
 
 def _validate_index_array(idx: np.ndarray, name: str, n_all: int) -> np.ndarray:
@@ -138,21 +178,56 @@ class HoldoutModelSelector:
     def __init__(
         self,
         degrees: list[int],
-        l2_lambdas: list[float],
+        regularization: str = REGULARIZATION_L2,
+        regularization_strengths: list[float] | None = None,
+        l2_lambdas: list[float] | None = None,
+        l1_max_iterations: int = DEFAULT_L1_MAX_ITERATIONS,
+        l1_tolerance: float = DEFAULT_L1_TOLERANCE,
+        l1_initialization: str = DEFAULT_L1_INITIALIZATION,
         scale_features: bool = False,
         selection_rtol: float = 1e-7,
         selection_atol: float = 1e-12,
         condition_warning_threshold: float = 1e12,
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
-        self.max_degree = int(max_degree)
-        self.degrees, self.l2_lambdas = _validate_hyperparameters(
-            degrees, l2_lambdas, self.max_degree
+        if l2_lambdas is not None and regularization_strengths is not None:
+            raise ValueError("Cannot specify both l2_lambdas and regularization_strengths.")
+
+        strengths = (
+            l2_lambdas
+            if l2_lambdas is not None
+            else (
+                regularization_strengths
+                if regularization_strengths is not None
+                else DEFAULT_REGULARIZATION_STRENGTHS
+            )
         )
+
+        norm_reg = regularization.strip().lower() if isinstance(regularization, str) else regularization
+        if norm_reg not in SUPPORTED_REGULARIZATIONS:
+            raise ValueError(
+                f"Unsupported regularization type '{regularization}'. Supported choices: {sorted(SUPPORTED_REGULARIZATIONS)}."
+            )
+
+        if norm_reg == REGULARIZATION_NONE:
+            strengths = [0.0]
+
+        self.max_degree = int(max_degree)
+        self.regularization = norm_reg
+        self.degrees, self.regularization_strengths = _validate_hyperparameters(
+            degrees, strengths, self.max_degree
+        )
+        self.l1_max_iterations = int(l1_max_iterations)
+        self.l1_tolerance = float(l1_tolerance)
+        self.l1_initialization = l1_initialization
         self.scale_features = scale_features
         self.selection_rtol = float(selection_rtol)
         self.selection_atol = float(selection_atol)
         self.condition_warning_threshold = float(condition_warning_threshold)
+
+    @property
+    def l2_lambdas(self) -> list[float]:
+        return self.regularization_strengths
 
     def select(
         self,
@@ -184,7 +259,7 @@ class HoldoutModelSelector:
         candidates: list[ModelCandidateResult] = []
 
         for deg in self.degrees:
-            for l2 in self.l2_lambdas:
+            for strength in self.regularization_strengths:
                 transformer = PolynomialFeatureTransformer(
                     degree=deg,
                     scale_features=self.scale_features,
@@ -194,7 +269,11 @@ class HoldoutModelSelector:
                 X_val = transformer.transform(x_val)
 
                 regressor = PolynomialRegressor(
-                    l2_lambda=l2,
+                    regularization=self.regularization,
+                    regularization_strength=strength,
+                    l1_max_iterations=self.l1_max_iterations,
+                    l1_tolerance=self.l1_tolerance,
+                    l1_initialization=self.l1_initialization,
                     condition_warning_threshold=self.condition_warning_threshold,
                 ).fit(X_train, y_train)
 
@@ -213,18 +292,23 @@ class HoldoutModelSelector:
                     y_val, pred_val, num_predictors=deg
                 )
 
-                cond_num = regressor.fit_details.condition_number
+                details = regressor.fit_details
 
                 candidates.append(
                     ModelCandidateResult(
                         degree=deg,
-                        l2_lambda=l2,
+                        regularization=self.regularization,
+                        regularization_strength=strength,
                         train_metrics=train_metrics,
                         val_metrics=val_metrics,
-                        condition_number=cond_num,
+                        condition_number=details.condition_number,
                         beta_scaled=beta_scaled,
                         beta_orig=beta_orig,
                         transformer=transformer,
+                        solver_used=details.solver_used,
+                        converged=details.converged,
+                        iterations=details.iterations,
+                        nonzero_coefficient_count=details.nonzero_coefficient_count,
                     )
                 )
 
@@ -237,9 +321,18 @@ class HoldoutModelSelector:
         )
         X_dev = refitted_transformer.fit_transform(x_dev)
         refitted_regressor = PolynomialRegressor(
-            l2_lambda=best_candidate.l2_lambda,
+            regularization=best_candidate.regularization,
+            regularization_strength=best_candidate.regularization_strength,
+            l1_max_iterations=self.l1_max_iterations,
+            l1_tolerance=self.l1_tolerance,
+            l1_initialization=self.l1_initialization,
             condition_warning_threshold=self.condition_warning_threshold,
         ).fit(X_dev, y_dev)
+
+        if refitted_regressor.fit_details.converged is False:
+            raise RuntimeError(
+                "Final refitted model on development set failed to converge."
+            )
 
         final_beta_scaled = refitted_regressor.beta
         final_beta_orig = refitted_transformer.convert_coefficients_to_original_basis(
@@ -272,8 +365,16 @@ class HoldoutModelSelector:
     def _select_best_candidate(
         self, candidates: list[ModelCandidateResult]
     ) -> ModelCandidateResult:
-        best = candidates[0]
-        for candidate in candidates[1:]:
+        converged_candidates = [c for c in candidates if c.converged is not False]
+        if not converged_candidates:
+            raise RuntimeError(
+                f"No L1 candidate converged within {self.l1_max_iterations} coordinate-descent iterations. "
+                f"Evaluated {len(candidates)} candidates across {len(self.degrees)} degrees and {len(self.regularization_strengths)} regularization strengths. "
+                "Increase --l1-max-iterations, relax --l1-tolerance, enable --scale-features, or revise the search grid."
+            )
+
+        best = converged_candidates[0]
+        for candidate in converged_candidates[1:]:
             cand_rmse = candidate.val_metrics.rmse
             best_rmse = best.val_metrics.rmse
 
@@ -282,7 +383,7 @@ class HoldoutModelSelector:
             ):
                 if candidate.degree < best.degree or (
                     candidate.degree == best.degree
-                    and candidate.l2_lambda > best.l2_lambda
+                    and candidate.regularization_strength > best.regularization_strength
                 ):
                     best = candidate
             elif cand_rmse < best_rmse:
@@ -297,7 +398,12 @@ class KFoldModelSelector:
     def __init__(
         self,
         degrees: list[int],
-        l2_lambdas: list[float],
+        regularization: str = REGULARIZATION_L2,
+        regularization_strengths: list[float] | None = None,
+        l2_lambdas: list[float] | None = None,
+        l1_max_iterations: int = DEFAULT_L1_MAX_ITERATIONS,
+        l1_tolerance: float = DEFAULT_L1_TOLERANCE,
+        l1_initialization: str = DEFAULT_L1_INITIALIZATION,
         k_folds: int = 5,
         seed: int = 42,
         scale_features: bool = False,
@@ -306,16 +412,46 @@ class KFoldModelSelector:
         condition_warning_threshold: float = 1e12,
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
-        self.max_degree = int(max_degree)
-        self.degrees, self.l2_lambdas = _validate_hyperparameters(
-            degrees, l2_lambdas, self.max_degree
+        if l2_lambdas is not None and regularization_strengths is not None:
+            raise ValueError("Cannot specify both l2_lambdas and regularization_strengths.")
+
+        strengths = (
+            l2_lambdas
+            if l2_lambdas is not None
+            else (
+                regularization_strengths
+                if regularization_strengths is not None
+                else DEFAULT_REGULARIZATION_STRENGTHS
+            )
         )
+
+        norm_reg = regularization.strip().lower() if isinstance(regularization, str) else regularization
+        if norm_reg not in SUPPORTED_REGULARIZATIONS:
+            raise ValueError(
+                f"Unsupported regularization type '{regularization}'. Supported choices: {sorted(SUPPORTED_REGULARIZATIONS)}."
+            )
+
+        if norm_reg == REGULARIZATION_NONE:
+            strengths = [0.0]
+
+        self.max_degree = int(max_degree)
+        self.regularization = norm_reg
+        self.degrees, self.regularization_strengths = _validate_hyperparameters(
+            degrees, strengths, self.max_degree
+        )
+        self.l1_max_iterations = int(l1_max_iterations)
+        self.l1_tolerance = float(l1_tolerance)
+        self.l1_initialization = l1_initialization
         self.k_folds = int(k_folds)
         self.seed = int(seed)
         self.scale_features = scale_features
         self.selection_rtol = float(selection_rtol)
         self.selection_atol = float(selection_atol)
         self.condition_warning_threshold = float(condition_warning_threshold)
+
+    @property
+    def l2_lambdas(self) -> list[float]:
+        return self.regularization_strengths
 
     def select(
         self,
@@ -340,12 +476,15 @@ class KFoldModelSelector:
         candidates: list[KFoldCandidateResult] = []
 
         for deg in self.degrees:
-            for l2 in self.l2_lambdas:
+            for strength in self.regularization_strengths:
                 fold_results: list[FoldMetricsResult] = []
                 oof_preds = np.zeros(len(d_idx), dtype=np.float64)
 
                 fold_mses, fold_rmses, fold_maes, fold_r2s = [], [], [], []
                 cond_nums = []
+                fold_converged_list = []
+                fold_iters_list = []
+                fold_nonzeros_list = []
 
                 for fold in folds:
                     f_train_idx = fold.train_indices
@@ -363,7 +502,11 @@ class KFoldModelSelector:
                     Xf_val = transformer.transform(xf_val)
 
                     regressor = PolynomialRegressor(
-                        l2_lambda=l2,
+                        regularization=self.regularization,
+                        regularization_strength=strength,
+                        l1_max_iterations=self.l1_max_iterations,
+                        l1_tolerance=self.l1_tolerance,
+                        l1_initialization=self.l1_initialization,
                         condition_warning_threshold=self.condition_warning_threshold,
                     ).fit(Xf_train, yf_train)
 
@@ -379,15 +522,22 @@ class KFoldModelSelector:
                         yf_val, pred_val, num_predictors=deg
                     )
 
-                    c_num = regressor.fit_details.condition_number
-                    cond_nums.append(c_num)
+                    details = regressor.fit_details
+                    cond_nums.append(details.condition_number)
+                    fold_converged_list.append(details.converged)
+                    if details.iterations is not None:
+                        fold_iters_list.append(details.iterations)
+                    fold_nonzeros_list.append(details.nonzero_coefficient_count)
 
                     fold_results.append(
                         FoldMetricsResult(
                             fold_index=fold.fold_index,
                             train_metrics=f_train_metrics,
                             val_metrics=f_val_metrics,
-                            condition_number=c_num,
+                            condition_number=details.condition_number,
+                            converged=details.converged,
+                            iterations=details.iterations,
+                            nonzero_coefficient_count=details.nonzero_coefficient_count,
                         )
                     )
 
@@ -409,15 +559,27 @@ class KFoldModelSelector:
                     r_squared=float(np.std(fold_r2s, ddof=0)),
                 )
 
+                converged_fold_count = sum(1 for c in fold_converged_list if c is not False)
+                cand_converged = converged_fold_count == len(folds)
+                mean_iters = float(np.mean(fold_iters_list)) if fold_iters_list else None
+                max_iters = max(fold_iters_list) if fold_iters_list else None
+                mean_nonzeros = float(np.mean(fold_nonzeros_list))
+
                 candidates.append(
                     KFoldCandidateResult(
                         degree=deg,
-                        l2_lambda=l2,
+                        regularization=self.regularization,
+                        regularization_strength=strength,
                         fold_results=fold_results,
                         mean_val_metrics=mean_val_metrics,
                         std_val_metrics=std_val_metrics,
                         mean_condition_number=float(np.mean(cond_nums)),
                         oof_predictions=oof_preds,
+                        converged_fold_count=converged_fold_count,
+                        mean_iterations=mean_iters,
+                        max_iterations=max_iters,
+                        mean_nonzero_coefficient_count=mean_nonzeros,
+                        converged=cand_converged,
                     )
                 )
 
@@ -430,9 +592,18 @@ class KFoldModelSelector:
         )
         X_dev = refitted_transformer.fit_transform(x_dev)
         refitted_regressor = PolynomialRegressor(
-            l2_lambda=best_candidate.l2_lambda,
+            regularization=best_candidate.regularization,
+            regularization_strength=best_candidate.regularization_strength,
+            l1_max_iterations=self.l1_max_iterations,
+            l1_tolerance=self.l1_tolerance,
+            l1_initialization=self.l1_initialization,
             condition_warning_threshold=self.condition_warning_threshold,
         ).fit(X_dev, y_dev)
+
+        if refitted_regressor.fit_details.converged is False:
+            raise RuntimeError(
+                "Final refitted model on development set failed to converge."
+            )
 
         final_beta_scaled = refitted_regressor.beta
         final_beta_orig = refitted_transformer.convert_coefficients_to_original_basis(
@@ -469,8 +640,16 @@ class KFoldModelSelector:
     def _select_best_candidate(
         self, candidates: list[KFoldCandidateResult]
     ) -> KFoldCandidateResult:
-        best = candidates[0]
-        for candidate in candidates[1:]:
+        converged_candidates = [c for c in candidates if c.converged]
+        if not converged_candidates:
+            raise RuntimeError(
+                f"No L1 candidate converged within {self.l1_max_iterations} coordinate-descent iterations. "
+                f"Evaluated {len(candidates)} candidates across {len(self.degrees)} degrees and {len(self.regularization_strengths)} regularization strengths. "
+                "Increase --l1-max-iterations, relax --l1-tolerance, enable --scale-features, or revise the search grid."
+            )
+
+        best = converged_candidates[0]
+        for candidate in converged_candidates[1:]:
             cand_rmse = candidate.mean_val_metrics.rmse
             best_rmse = best.mean_val_metrics.rmse
 
@@ -479,7 +658,7 @@ class KFoldModelSelector:
             ):
                 if candidate.degree < best.degree or (
                     candidate.degree == best.degree
-                    and candidate.l2_lambda > best.l2_lambda
+                    and candidate.regularization_strength > best.regularization_strength
                 ):
                     best = candidate
             elif cand_rmse < best_rmse:

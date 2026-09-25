@@ -4,6 +4,7 @@ import argparse
 import math
 import pathlib
 import sys
+import warnings
 from typing import Any
 
 import numpy as np
@@ -14,7 +15,16 @@ from polynomial_regression.features import (
     PolynomialFeatureTransformer,
 )
 from polynomial_regression.metrics import RegressionMetrics
-from polynomial_regression.regression import PolynomialRegressor
+from polynomial_regression.regression import (
+    DEFAULT_L1_INITIALIZATION,
+    DEFAULT_L1_MAX_ITERATIONS,
+    DEFAULT_L1_TOLERANCE,
+    DEFAULT_REGULARIZATION_STRENGTHS,
+    REGULARIZATION_L2,
+    REGULARIZATION_NONE,
+    SUPPORTED_REGULARIZATIONS,
+    PolynomialRegressor,
+)
 from polynomial_regression.reporting import ReportGenerator
 from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
 from polynomial_regression.splitting import DataSplitter, KFoldSplitter
@@ -30,6 +40,10 @@ def configure_matplotlib_backend(show_plots: bool) -> None:
 def _validate_configuration(args: argparse.Namespace) -> None:
     """Validates pipeline configuration settings and canonicalizes search grids."""
 
+    # Avoid re-validation conflict if already validated
+    if getattr(args, "_validated", False):
+        return
+
     # 1. Input path & column validation
     if not hasattr(args, "csv_file") or not str(args.csv_file).strip():
         raise ValueError("Input CSV file path must be a non-empty string.")
@@ -40,7 +54,122 @@ def _validate_configuration(args: argparse.Namespace) -> None:
     if not hasattr(args, "y_column") or not str(args.y_column).strip():
         raise ValueError("Requested Y column name cannot be empty or whitespace-only.")
 
-    # 2. Max degree validation
+    # 2. Regularization type validation & deprecated option handling
+    reg = getattr(args, "regularization", REGULARIZATION_L2)
+    if not isinstance(reg, str):
+        raise ValueError(f"Regularization type must be a string; received {type(reg)}.")
+    norm_reg = reg.strip().lower()
+    if norm_reg not in SUPPORTED_REGULARIZATIONS:
+        raise ValueError(
+            f"Unsupported regularization type '{reg}'. Supported choices: {sorted(SUPPORTED_REGULARIZATIONS)}."
+        )
+
+    l2_vals_provided = hasattr(args, "l2_values") and args.l2_values is not None
+    reg_vals_provided = (
+        hasattr(args, "regularization_values") and args.regularization_values is not None
+    )
+
+    if l2_vals_provided and reg_vals_provided:
+        raise ValueError(
+            "Cannot specify both --l2-values and --regularization-values."
+        )
+
+    if l2_vals_provided:
+        if hasattr(args, "regularization_explicit") and args.regularization_explicit and norm_reg != REGULARIZATION_L2:
+            raise ValueError(
+                f"--l2-values cannot be used with --regularization '{norm_reg}'. Use --regularization-values instead."
+            )
+        warnings.warn(
+            "--l2-values is deprecated; use --regularization-values instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        norm_reg = REGULARIZATION_L2
+        raw_strengths = args.l2_values
+    elif reg_vals_provided:
+        raw_strengths = args.regularization_values
+    else:
+        if norm_reg == REGULARIZATION_NONE:
+            raw_strengths = [0.0]
+        else:
+            raw_strengths = DEFAULT_REGULARIZATION_STRENGTHS
+
+    args.regularization = norm_reg
+
+    # 3. Regularization strengths validation
+    if not raw_strengths:
+        raise ValueError("At least one regularization strength value must be supplied.")
+
+    validated_strengths: list[float] = []
+    for str_val in raw_strengths:
+        try:
+            val = float(str_val)
+        except (ValueError, TypeError):
+            raise ValueError(
+                f"Regularization strength values must be numeric; received {str_val}."
+            )
+        if not np.isfinite(val) or val < 0.0:
+            raise ValueError(
+                f"Regularization strength values must be finite and non-negative; received {str_val}."
+            )
+        validated_strengths.append(val)
+
+    if norm_reg == REGULARIZATION_NONE:
+        if any(v != 0.0 for v in validated_strengths):
+            raise ValueError(
+                f"Regularization strengths must be 0.0 for 'none' regularization; received {validated_strengths}."
+            )
+        validated_strengths = [0.0]
+
+    # 4. L1 solver parameters validation
+    max_iters = getattr(args, "l1_max_iterations", DEFAULT_L1_MAX_ITERATIONS)
+    try:
+        max_iters_val = int(max_iters)
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"L1 maximum iterations must be a positive integer; received {max_iters}."
+        )
+    if max_iters_val < 1:
+        raise ValueError(
+            f"L1 maximum iterations must be a positive integer; received {max_iters}."
+        )
+    args.l1_max_iterations = max_iters_val
+
+    tol = getattr(args, "l1_tolerance", DEFAULT_L1_TOLERANCE)
+    try:
+        tol_val = float(tol)
+    except (ValueError, TypeError):
+        raise ValueError(
+            f"L1 convergence tolerance must be finite and strictly positive; received {tol}."
+        )
+    if not np.isfinite(tol_val) or tol_val <= 0.0:
+        raise ValueError(
+            f"L1 convergence tolerance must be finite and strictly positive; received {tol}."
+        )
+    args.l1_tolerance = tol_val
+
+    l1_init = getattr(args, "l1_initialization", DEFAULT_L1_INITIALIZATION)
+    if not isinstance(l1_init, str):
+        raise ValueError(
+            f"L1 initialization must be a string; received {type(l1_init)}."
+        )
+    norm_l1_init = l1_init.strip().lower()
+    if norm_l1_init not in {"zeros", "ols"}:
+        raise ValueError(
+            f"Unsupported L1 initialization '{l1_init}'. Supported choices: 'zeros', 'ols'."
+        )
+    args.l1_initialization = norm_l1_init
+
+    # Feature scaling warning for L1
+    if norm_reg == "l1" and not getattr(args, "scale_features", False):
+        warnings.warn(
+            "L1 regularization is sensitive to feature scale. Consider enabling "
+            "--scale-features so polynomial terms are penalized on comparable scales.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    # 5. Max degree validation
     if not hasattr(args, "max_degree") or not isinstance(
         args.max_degree, (int, np.integer)
     ):
@@ -51,7 +180,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Maximum polynomial degree must be non-negative; received {max_deg}."
         )
 
-    # 3. Degrees validation
+    # 6. Degrees validation
     if not hasattr(args, "degrees") or not args.degrees:
         raise ValueError("At least one polynomial degree must be supplied.")
 
@@ -70,29 +199,13 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             )
         validated_degrees.append(d_int)
 
-    # 4. L2 values validation
-    if not hasattr(args, "l2_values") or not args.l2_values:
-        raise ValueError("At least one L2 regularization value must be supplied.")
-
-    validated_l2: list[float] = []
-    for l2 in args.l2_values:
-        try:
-            l2_val = float(l2)
-        except (ValueError, TypeError):
-            raise ValueError(f"L2 values must be numeric; received {l2}.")
-        if not np.isfinite(l2_val) or l2_val < 0.0:
-            raise ValueError(
-                f"L2 values must be finite and non-negative; received {l2}."
-            )
-        validated_l2.append(l2_val)
-
-    # 5. Fold count validation
+    # 7. Fold count validation
     if not hasattr(args, "folds") or not isinstance(args.folds, (int, np.integer)):
         raise ValueError("Number of folds must be an integer.")
     if int(args.folds) < 2:
         raise ValueError(f"Number of folds must be at least 2; received {args.folds}.")
 
-    # 6. Split ratios validation
+    # 8. Split ratios validation
     train_ratio = float(args.train_ratio)
     val_ratio = float(args.validation_ratio)
     test_ratio = float(args.test_ratio)
@@ -110,7 +223,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Split ratios must sum to 1.0 within tolerance; sum is {total_ratio:.6f}."
         )
 
-    # 7. Curve points validation
+    # 9. Curve points validation
     if not hasattr(args, "curve_points") or not isinstance(
         args.curve_points, (int, np.integer)
     ):
@@ -120,7 +233,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Curve point count must be at least 2; received {args.curve_points}."
         )
 
-    # 8. Bootstrap samples validation
+    # 10. Bootstrap samples validation
     if not hasattr(args, "bootstrap_samples") or not isinstance(
         args.bootstrap_samples, (int, np.integer)
     ):
@@ -130,7 +243,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Bootstrap sample count must be non-negative; received {args.bootstrap_samples}."
         )
 
-    # 9. Plot DPI validation
+    # 11. Plot DPI validation
     if not hasattr(args, "plot_dpi") or not isinstance(
         args.plot_dpi, (int, np.integer)
     ):
@@ -140,14 +253,14 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Plot DPI must be a positive integer; received {args.plot_dpi}."
         )
 
-    # 10. Condition warning threshold
+    # 12. Condition warning threshold
     cond_thresh = float(args.condition_warning_threshold)
     if not np.isfinite(cond_thresh) or cond_thresh <= 0.0:
         raise ValueError(
             f"Condition warning threshold must be finite and strictly positive (> 0); received {cond_thresh}."
         )
 
-    # 11. Selection tolerances
+    # 13. Selection tolerances
     rtol = float(args.selection_rtol)
     atol = float(args.selection_atol)
     if not np.isfinite(rtol) or rtol < 0.0:
@@ -159,7 +272,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Selection absolute tolerance must be finite and non-negative; received {atol}."
         )
 
-    # 12. Residual bins
+    # 14. Residual bins
     if args.residual_bins is not None and (
         not isinstance(args.residual_bins, (int, np.integer))
         or int(args.residual_bins) <= 0
@@ -168,7 +281,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
             f"Residual bins count must be a positive integer; received {args.residual_bins}."
         )
 
-    # 13. Seeds validation
+    # 15. Seeds validation
     if not isinstance(args.seed, (int, np.integer)):
         raise TypeError("Random seed must be an integer.")
     if not isinstance(args.bootstrap_seed, (int, np.integer)):
@@ -177,12 +290,18 @@ def _validate_configuration(args: argparse.Namespace) -> None:
     # Store raw requested grids before canonicalization
     if not hasattr(args, "_requested_degrees") or args._requested_degrees is None:
         args._requested_degrees = list(args.degrees)
-    if not hasattr(args, "_requested_l2_values") or args._requested_l2_values is None:
-        args._requested_l2_values = list(args.l2_values)
+    if (
+        not hasattr(args, "_requested_regularization_values")
+        or args._requested_regularization_values is None
+    ):
+        args._requested_regularization_values = list(raw_strengths)
+    args._requested_l2_values = list(raw_strengths)
 
-    # Deduplicate and sort canonical effective grids using exact float equality
+    # Store canonicalized effective grids
     args.degrees = sorted(set(validated_degrees))
-    args.l2_values = sorted(set(validated_l2))
+    args.regularization_values = sorted(set(validated_strengths))
+    args.l2_values = args.regularization_values
+    args._validated = True
 
 
 def validate_args(
@@ -244,6 +363,44 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
 
     # Hyperparameter search space
     parser.add_argument(
+        "--regularization",
+        choices=["none", "l1", "l2"],
+        default=REGULARIZATION_L2,
+        help="Regularization family: 'none', 'l1', or 'l2' (default: l2).",
+    )
+    parser.add_argument(
+        "--regularization-values",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Candidate regularization strengths.",
+    )
+    parser.add_argument(
+        "--l2-values",
+        type=float,
+        nargs="+",
+        default=None,
+        help="[Deprecated] Candidate L2 regularization strengths.",
+    )
+    parser.add_argument(
+        "--l1-max-iterations",
+        type=int,
+        default=DEFAULT_L1_MAX_ITERATIONS,
+        help=f"Maximum coordinate-descent iterations for L1 solver (default: {DEFAULT_L1_MAX_ITERATIONS}).",
+    )
+    parser.add_argument(
+        "--l1-tolerance",
+        type=float,
+        default=DEFAULT_L1_TOLERANCE,
+        help=f"Convergence tolerance for L1 solver (default: {DEFAULT_L1_TOLERANCE}).",
+    )
+    parser.add_argument(
+        "--l1-initialization",
+        choices=["zeros", "ols"],
+        default=DEFAULT_L1_INITIALIZATION,
+        help=f"Initialization method for L1 coordinate descent (default: {DEFAULT_L1_INITIALIZATION}).",
+    )
+    parser.add_argument(
         "--degrees",
         type=int,
         nargs="+",
@@ -255,13 +412,6 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=DEFAULT_MAX_DEGREE,
         help=f"Maximum allowed polynomial degree (default: {DEFAULT_MAX_DEGREE}).",
-    )
-    parser.add_argument(
-        "--l2-values",
-        type=float,
-        nargs="+",
-        default=[0.0, 1e-6, 1e-4, 1e-2, 0.1, 1.0, 10.0, 100.0],
-        help="Candidate L2 regularization strengths.",
     )
     parser.add_argument(
         "--scale-features",
@@ -346,8 +496,12 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Absolute tolerance for model selection tie-breaking.",
     )
 
+    raw_args = list(args) if args is not None else sys.argv[1:]
     parsed = parser.parse_args(args)
-    parsed._raw_argv = list(args) if args is not None else sys.argv[1:]
+    parsed._raw_argv = raw_args
+    parsed.regularization_explicit = any(
+        a == "--regularization" or a.startswith("--regularization=") for a in raw_args
+    )
     return validate_args(parsed, parser)
 
 
@@ -454,7 +608,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         holdout_selector = HoldoutModelSelector(
             degrees=args.degrees,
-            l2_lambdas=args.l2_values,
+            regularization=args.regularization,
+            regularization_strengths=args.regularization_values,
+            l1_max_iterations=args.l1_max_iterations,
+            l1_tolerance=args.l1_tolerance,
+            l1_initialization=args.l1_initialization,
             scale_features=args.scale_features,
             selection_rtol=args.selection_rtol,
             selection_atol=args.selection_atol,
@@ -499,17 +657,18 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 plot_style=args.plot_style,
                 show_plots=args.show_plots,
             )
-            best_deg = holdout_res.best_candidate.degree
-            best_l2 = holdout_res.best_candidate.l2_lambda
+            best_cand = holdout_res.best_candidate
+            best_deg = best_cand.degree
+            best_strength = best_cand.regularization_strength
 
             holdout_visualizer.plot_04_holdout_validation_rmse(
-                holdout_res.candidates, best_deg, best_l2
+                holdout_res.candidates, best_deg, best_strength
             )
             holdout_visualizer.plot_05_train_validation_error(
-                holdout_res.candidates, best_l2, best_deg
+                holdout_res.candidates, best_strength, best_deg
             )
             holdout_visualizer.plot_06_holdout_rmse_heatmap(
-                holdout_res.candidates, best_deg, best_l2
+                holdout_res.candidates, best_deg, best_strength
             )
 
             # Candidate Model Curves (min, mid, selected, max)
@@ -530,11 +689,15 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     max_degree=args.max_degree,
                 )
                 X_tr = c_trans.fit_transform(x_all[split.train_indices])
-                c_reg = PolynomialRegressor(l2_lambda=best_l2).fit(
-                    X_tr, y_all[split.train_indices]
-                )
+                c_reg = PolynomialRegressor(
+                    regularization=best_cand.regularization,
+                    regularization_strength=best_strength,
+                    l1_max_iterations=args.l1_max_iterations,
+                    l1_tolerance=args.l1_tolerance,
+                    l1_initialization=args.l1_initialization,
+                ).fit(X_tr, y_all[split.train_indices])
                 X_g = c_trans.transform(x_grid)
-                cand_curves.append((cd, best_l2, x_grid, c_reg.predict(X_g)))
+                cand_curves.append((cd, best_strength, x_grid, c_reg.predict(X_g)))
 
             holdout_visualizer.plot_07_candidate_models(
                 x_all[split.train_indices],
@@ -556,9 +719,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 x_grid,
                 y_grid_pred,
                 best_deg,
-                best_l2,
+                best_strength,
                 holdout_res.final_test_metrics,
                 workflow="holdout",
+                regularization=best_cand.regularization,
             )
 
             # Optional Bootstrap Band
@@ -568,11 +732,15 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     y_all[split.dev_indices],
                     x_grid,
                     best_deg,
-                    best_l2,
-                    args.scale_features,
-                    args.bootstrap_samples,
-                    args.bootstrap_seed,
-                    args.max_degree,
+                    regularization=best_cand.regularization,
+                    regularization_strength=best_strength,
+                    l1_max_iterations=args.l1_max_iterations,
+                    l1_tolerance=args.l1_tolerance,
+                    l1_initialization=args.l1_initialization,
+                    scale_features=args.scale_features,
+                    num_samples=args.bootstrap_samples,
+                    seed=args.bootstrap_seed,
+                    max_degree=args.max_degree,
                 )
                 holdout_visualizer.plot_13b_fitted_curve_uncertainty_band(
                     x_all[split.dev_indices],
@@ -584,9 +752,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     lower_b,
                     upper_b,
                     best_deg,
-                    best_l2,
+                    best_strength,
                     args.bootstrap_samples,
                     workflow="holdout",
+                    regularization=best_cand.regularization,
                 )
 
             holdout_visualizer.plot_14_test_actual_vs_predicted(
@@ -612,21 +781,29 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 else holdout_res.final_refitted_beta_scaled,
                 is_original_basis=True,
                 workflow="holdout",
+                regularization=best_cand.regularization,
+                regularization_strength=best_strength,
+                nonzero_coefficient_count=holdout_res.final_fit_details.nonzero_coefficient_count,
             )
 
             cond_degs = sorted(
-                {c.degree for c in holdout_res.candidates if c.l2_lambda == best_l2}
+                {
+                    c.degree
+                    for c in holdout_res.candidates
+                    if c.regularization_strength == best_strength
+                }
             )
             cond_nums = [
                 c.condition_number
                 for c in holdout_res.candidates
-                if c.l2_lambda == best_l2
+                if c.regularization_strength == best_strength
             ]
             holdout_visualizer.plot_19_condition_numbers(
                 cond_degs,
                 cond_nums,
                 args.condition_warning_threshold,
                 workflow="holdout",
+                regularization=best_cand.regularization,
             )
 
             holdout_visualizer.plot_20_results_dashboard(
@@ -640,7 +817,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 holdout_res.test_residuals,
                 holdout_res.candidates,
                 best_deg,
-                best_l2,
+                best_strength,
                 holdout_res.final_test_metrics,
                 workflow="holdout",
             )
@@ -650,7 +827,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             (
                 "Holdout",
                 holdout_res.best_candidate.degree,
-                holdout_res.best_candidate.l2_lambda,
+                holdout_res.best_candidate.regularization,
+                holdout_res.best_candidate.regularization_strength,
                 holdout_res.final_test_metrics,
             )
         )
@@ -662,7 +840,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         kfold_selector = KFoldModelSelector(
             degrees=args.degrees,
-            l2_lambdas=args.l2_values,
+            regularization=args.regularization,
+            regularization_strengths=args.regularization_values,
+            l1_max_iterations=args.l1_max_iterations,
+            l1_tolerance=args.l1_tolerance,
+            l1_initialization=args.l1_initialization,
             k_folds=args.folds,
             seed=args.seed,
             scale_features=args.scale_features,
@@ -720,20 +902,21 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 plot_style=args.plot_style,
                 show_plots=args.show_plots,
             )
-            best_deg = kfold_res.best_candidate.degree
-            best_l2 = kfold_res.best_candidate.l2_lambda
+            best_cand = kfold_res.best_candidate
+            best_deg = best_cand.degree
+            best_strength = best_cand.regularization_strength
 
             kfold_visualizer.plot_08_kfold_assignments(
                 split.dev_indices, dev_fold_splits
             )
             kfold_visualizer.plot_09_kfold_mean_rmse(
-                kfold_res.candidates, best_deg, best_l2
+                kfold_res.candidates, best_deg, best_strength
             )
             kfold_visualizer.plot_10_kfold_rmse_heatmap(
-                kfold_res.candidates, best_deg, best_l2
+                kfold_res.candidates, best_deg, best_strength
             )
             kfold_visualizer.plot_10b_kfold_rmse_std_heatmap(
-                kfold_res.candidates, best_deg, best_l2
+                kfold_res.candidates, best_deg, best_strength
             )
 
             sel_cand = kfold_res.best_candidate
@@ -742,7 +925,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 sel_cand.mean_val_metrics.rmse,
                 sel_cand.std_val_metrics.rmse,
                 best_deg,
-                best_l2,
+                best_strength,
+                regularization=best_cand.regularization,
             )
 
             oof_metrics = RegressionMetrics.calculate(
@@ -765,9 +949,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 x_grid,
                 y_grid_pred,
                 best_deg,
-                best_l2,
+                best_strength,
                 kfold_res.final_test_metrics,
                 workflow="kfold",
+                regularization=best_cand.regularization,
             )
 
             if args.bootstrap_samples > 0:
@@ -776,11 +961,15 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     y_all[split.dev_indices],
                     x_grid,
                     best_deg,
-                    best_l2,
-                    args.scale_features,
-                    args.bootstrap_samples,
-                    args.bootstrap_seed,
-                    args.max_degree,
+                    regularization=best_cand.regularization,
+                    regularization_strength=best_strength,
+                    l1_max_iterations=args.l1_max_iterations,
+                    l1_tolerance=args.l1_tolerance,
+                    l1_initialization=args.l1_initialization,
+                    scale_features=args.scale_features,
+                    num_samples=args.bootstrap_samples,
+                    seed=args.bootstrap_seed,
+                    max_degree=args.max_degree,
                 )
                 kfold_visualizer.plot_13b_fitted_curve_uncertainty_band(
                     x_all[split.dev_indices],
@@ -792,9 +981,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     lower_b,
                     upper_b,
                     best_deg,
-                    best_l2,
+                    best_strength,
                     args.bootstrap_samples,
                     workflow="kfold",
+                    regularization=best_cand.regularization,
                 )
 
             kfold_visualizer.plot_14_test_actual_vs_predicted(
@@ -820,21 +1010,29 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 else kfold_res.final_refitted_beta_scaled,
                 is_original_basis=True,
                 workflow="kfold",
+                regularization=best_cand.regularization,
+                regularization_strength=best_strength,
+                nonzero_coefficient_count=kfold_res.final_fit_details.nonzero_coefficient_count,
             )
 
             cond_degs = sorted(
-                {c.degree for c in kfold_res.candidates if c.l2_lambda == best_l2}
+                {
+                    c.degree
+                    for c in kfold_res.candidates
+                    if c.regularization_strength == best_strength
+                }
             )
             cond_nums = [
                 c.mean_condition_number
                 for c in kfold_res.candidates
-                if c.l2_lambda == best_l2
+                if c.regularization_strength == best_strength
             ]
             kfold_visualizer.plot_19_condition_numbers(
                 cond_degs,
                 cond_nums,
                 args.condition_warning_threshold,
                 workflow="kfold",
+                regularization=best_cand.regularization,
             )
 
             kfold_visualizer.plot_20_results_dashboard(
@@ -848,7 +1046,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 kfold_res.test_residuals,
                 kfold_res.candidates,
                 best_deg,
-                best_l2,
+                best_strength,
                 kfold_res.final_test_metrics,
                 workflow="kfold",
             )
@@ -858,7 +1056,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             (
                 "K-Fold",
                 kfold_res.best_candidate.degree,
-                kfold_res.best_candidate.l2_lambda,
+                kfold_res.best_candidate.regularization,
+                kfold_res.best_candidate.regularization_strength,
                 kfold_res.final_test_metrics,
             )
         )
@@ -877,7 +1076,11 @@ def _compute_bootstrap_bands(
     y_dev: np.ndarray,
     x_grid: np.ndarray,
     degree: int,
-    l2_lambda: float,
+    regularization: str,
+    regularization_strength: float,
+    l1_max_iterations: int,
+    l1_tolerance: float,
+    l1_initialization: str,
     scale_features: bool,
     num_samples: int,
     seed: int,
@@ -895,7 +1098,19 @@ def _compute_bootstrap_bands(
             degree=degree, scale_features=scale_features, max_degree=max_degree
         )
         Xb = transformer.fit_transform(xb)
-        regressor = PolynomialRegressor(l2_lambda=l2_lambda).fit(Xb, yb)
+        regressor = PolynomialRegressor(
+            regularization=regularization,
+            regularization_strength=regularization_strength,
+            l1_max_iterations=l1_max_iterations,
+            l1_tolerance=l1_tolerance,
+            l1_initialization=l1_initialization,
+        ).fit(Xb, yb)
+
+        if regressor.fit_details.converged is False:
+            raise RuntimeError(
+                f"L1 bootstrap refit {i} of {num_samples} failed to converge within {l1_max_iterations} iterations. "
+                "The fitted-curve uncertainty band was not generated."
+            )
 
         Xg = transformer.transform(x_grid)
         grid_preds[i, :] = regressor.predict(Xg)
@@ -920,14 +1135,16 @@ def _print_terminal_summary(
         f"Dataset Split Sizes: Train={len(split.train_indices)}, Val={len(split.val_indices)}, Test={len(split.test_indices)}"
     )
     print(f"Candidate Degrees:   {args.degrees}")
-    print(f"Candidate L2 Values: {args.l2_values}")
+    print(f"Regularization Type: {args.regularization}")
+    print(f"Candidate Strengths: {args.regularization_values}")
     print(f"Feature Scaling:     {'Enabled' if args.scale_features else 'Disabled'}")
     print("-" * 70)
 
-    for mode_name, deg, l2, metrics in summary_outputs:
+    for mode_name, deg, reg_type, strength, metrics in summary_outputs:
         print(f"[{mode_name.upper()} WORKFLOW SELECTION]")
         print(f"  Selected Degree:   {deg}")
-        print(f"  Selected L2:       {l2}")
+        print(f"  Selected Reg Type: {reg_type}")
+        print(f"  Selected Strength: {strength}")
         print(f"  Final Test RMSE:   {metrics.rmse:.6f}")
         print(f"  Final Test MAE:    {metrics.mae:.6f}")
         print(f"  Final Test R²:     {metrics.r_squared:.6f}")

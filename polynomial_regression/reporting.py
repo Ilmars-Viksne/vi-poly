@@ -13,7 +13,14 @@ import matplotlib
 import numpy as np
 
 from .metrics import EvaluationMetrics
-from .regression import ModelFitDetails
+from .regression import (
+    DEFAULT_L1_INITIALIZATION,
+    DEFAULT_L1_MAX_ITERATIONS,
+    DEFAULT_L1_TOLERANCE,
+    REGULARIZATION_L2,
+    REGULARIZATION_NONE,
+    ModelFitDetails,
+)
 from .selection import HoldoutSelectionResult, KFoldSelectionResult
 
 
@@ -84,15 +91,22 @@ class ReportGenerator:
                 parsed_args_dict[k] = v
 
         req_degrees = getattr(args, "_requested_degrees", getattr(args, "degrees", []))
-        req_l2 = getattr(args, "_requested_l2_values", getattr(args, "l2_values", []))
+        req_strengths = getattr(
+            args,
+            "_requested_regularization_values",
+            getattr(args, "regularization_values", getattr(args, "l2_values", [])),
+        )
         eff_degrees = getattr(args, "degrees", [])
-        eff_l2 = getattr(args, "l2_values", [])
+        eff_strengths = getattr(
+            args, "regularization_values", getattr(args, "l2_values", [])
+        )
+        reg_type = getattr(args, "regularization", REGULARIZATION_L2)
 
         duplicates_removed = (
             len(req_degrees) != len(eff_degrees)
-            or len(req_l2) != len(eff_l2)
+            or len(req_strengths) != len(eff_strengths)
             or list(req_degrees) != list(eff_degrees)
-            or list(req_l2) != list(eff_l2)
+            or list(req_strengths) != list(eff_strengths)
         )
 
         metadata = {
@@ -110,14 +124,36 @@ class ReportGenerator:
                 "numpy": np.__version__,
                 "matplotlib": matplotlib.__version__,
             },
+            "regularization_search": {
+                "requested_type": reg_type,
+                "effective_type": reg_type,
+                "requested_strengths": req_strengths,
+                "effective_strengths": eff_strengths,
+                "canonicalization": {
+                    "duplicates_removed": duplicates_removed,
+                    "ordering": "ascending",
+                    "float_deduplication": "exact_equality",
+                },
+            },
+            "l1_solver": {
+                "max_iterations": getattr(
+                    args, "l1_max_iterations", DEFAULT_L1_MAX_ITERATIONS
+                ),
+                "tolerance": getattr(args, "l1_tolerance", DEFAULT_L1_TOLERANCE),
+                "initialization": getattr(
+                    args, "l1_initialization", DEFAULT_L1_INITIALIZATION
+                ),
+            },
             "search_grid": {
                 "requested": {
                     "degrees": req_degrees,
-                    "l2_values": req_l2,
+                    "regularization_values": req_strengths,
+                    "l2_values": req_strengths,
                 },
                 "effective": {
                     "degrees": eff_degrees,
-                    "l2_values": eff_l2,
+                    "regularization_values": eff_strengths,
+                    "l2_values": eff_strengths,
                 },
                 "canonicalization": {
                     "duplicates_removed": duplicates_removed,
@@ -162,7 +198,6 @@ class ReportGenerator:
     ) -> pathlib.Path:
         filepath = self.output_dir / "split_summary.json"
 
-        # Fall back to loaded_array_indices if provenance arrays are omitted
         tr_obs = (
             train_observation_indices.tolist()
             if train_observation_indices is not None
@@ -287,7 +322,12 @@ class ReportGenerator:
         filepath = self.output_dir / "holdout_results.csv"
         fieldnames = [
             "degree",
-            "l2_lambda",
+            "regularization",
+            "regularization_strength",
+            "solver_used",
+            "converged",
+            "iterations",
+            "nonzero_coefficient_count",
             "train_mse",
             "train_rmse",
             "train_mae",
@@ -305,7 +345,12 @@ class ReportGenerator:
                 writer.writerow(
                     {
                         "degree": cand.degree,
-                        "l2_lambda": cand.l2_lambda,
+                        "regularization": cand.regularization,
+                        "regularization_strength": cand.regularization_strength,
+                        "solver_used": cand.solver_used,
+                        "converged": cand.converged,
+                        "iterations": cand.iterations,
+                        "nonzero_coefficient_count": cand.nonzero_coefficient_count,
                         "train_mse": cand.train_metrics.mse,
                         "train_rmse": cand.train_metrics.rmse,
                         "train_mae": cand.train_metrics.mae,
@@ -327,8 +372,12 @@ class ReportGenerator:
 
         fold_fields = [
             "degree",
-            "l2_lambda",
+            "regularization",
+            "regularization_strength",
             "fold_number",
+            "converged",
+            "iterations",
+            "nonzero_coefficient_count",
             "train_mse",
             "train_rmse",
             "train_mae",
@@ -342,7 +391,12 @@ class ReportGenerator:
 
         summary_fields = [
             "degree",
-            "l2_lambda",
+            "regularization",
+            "regularization_strength",
+            "converged_fold_count",
+            "mean_iterations",
+            "max_iterations",
+            "mean_nonzero_coefficient_count",
             "mean_val_mse",
             "mean_val_rmse",
             "mean_val_mae",
@@ -362,8 +416,12 @@ class ReportGenerator:
                     writer.writerow(
                         {
                             "degree": cand.degree,
-                            "l2_lambda": cand.l2_lambda,
+                            "regularization": cand.regularization,
+                            "regularization_strength": cand.regularization_strength,
                             "fold_number": fr.fold_index + 1,
+                            "converged": fr.converged,
+                            "iterations": fr.iterations,
+                            "nonzero_coefficient_count": fr.nonzero_coefficient_count,
                             "train_mse": fr.train_metrics.mse,
                             "train_rmse": fr.train_metrics.rmse,
                             "train_mae": fr.train_metrics.mae,
@@ -383,7 +441,12 @@ class ReportGenerator:
                 writer.writerow(
                     {
                         "degree": cand.degree,
-                        "l2_lambda": cand.l2_lambda,
+                        "regularization": cand.regularization,
+                        "regularization_strength": cand.regularization_strength,
+                        "converged_fold_count": cand.converged_fold_count,
+                        "mean_iterations": cand.mean_iterations,
+                        "max_iterations": cand.max_iterations,
+                        "mean_nonzero_coefficient_count": cand.mean_nonzero_coefficient_count,
                         "mean_val_mse": cand.mean_val_metrics.mse,
                         "mean_val_rmse": cand.mean_val_metrics.rmse,
                         "mean_val_mae": cand.mean_val_metrics.mae,
@@ -422,13 +485,22 @@ class ReportGenerator:
         model_dict = {
             "selected_workflow": workflow_name,
             "selected_degree": best_candidate.degree,
-            "selected_l2_lambda": best_candidate.l2_lambda,
+            "selected_regularization": best_candidate.regularization,
+            "selected_regularization_strength": best_candidate.regularization_strength,
+            "requested_regularization": fit_details.requested_regularization,
+            "effective_regularization": fit_details.effective_regularization,
             "coefficients_ordering_convention": "Ascending polynomial order: [beta_0, beta_1*x, beta_2*x^2, ...]",
             "coefficients_scaled_basis": beta_scaled.tolist(),
             "coefficients_original_basis": beta_orig.tolist(),
             "scale_features_enabled": transformer.scale_features,
             "scaling_parameters": scaling_params,
             "solver_used": fit_details.solver_used,
+            "converged": fit_details.converged,
+            "iterations": fit_details.iterations,
+            "final_objective": fit_details.final_objective,
+            "max_coefficient_change": fit_details.max_coefficient_change,
+            "nonzero_coefficient_count": fit_details.nonzero_coefficient_count,
+            "l1_initialization": fit_details.l1_initialization,
             "condition_number": fit_details.condition_number,
             "condition_warning": fit_details.condition_warning,
             "rank": fit_details.rank,
@@ -604,12 +676,14 @@ class ReportGenerator:
                 "holdout": {
                     "selection_metric": "validation_rmse",
                     "selected_degree": holdout_res.best_candidate.degree,
-                    "selected_l2_lambda": holdout_res.best_candidate.l2_lambda,
+                    "selected_regularization": holdout_res.best_candidate.regularization,
+                    "selected_regularization_strength": holdout_res.best_candidate.regularization_strength,
                 },
                 "kfold": {
                     "selection_metric": "mean_cross_validation_rmse",
                     "selected_degree": kfold_res.best_candidate.degree,
-                    "selected_l2_lambda": kfold_res.best_candidate.l2_lambda,
+                    "selected_regularization": kfold_res.best_candidate.regularization,
+                    "selected_regularization_strength": kfold_res.best_candidate.regularization_strength,
                 },
             },
             "overall_best_workflow": None,

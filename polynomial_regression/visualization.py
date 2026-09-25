@@ -27,6 +27,28 @@ def _workflow_filename(number: str, workflow: str, description: str) -> str:
     return f"{number}_{wf_norm}_{description}"
 
 
+def _format_reg_label(reg_type: str, strength: float) -> str:
+    norm_reg = reg_type.lower().strip()
+    if norm_reg == "none" or strength == 0.0:
+        return "OLS"
+    if norm_reg == "l1":
+        return f"L1 = {strength}"
+    if norm_reg == "l2":
+        return f"L2 = {strength}"
+    return f"{reg_type.upper()} = {strength}"
+
+
+def _format_reg_title_fragment(reg_type: str, strength: float) -> str:
+    norm_reg = reg_type.lower().strip()
+    if norm_reg == "none" or strength == 0.0:
+        return "OLS"
+    if norm_reg == "l1":
+        return f"L1={strength}"
+    if norm_reg == "l2":
+        return f"L2={strength}"
+    return f"{reg_type.upper()}={strength}"
+
+
 class RegressionVisualizer:
     """Creates scientific plots for polynomial regression analysis."""
 
@@ -340,36 +362,43 @@ class RegressionVisualizer:
 
     # 4. Holdout Validation RMSE Curves
     def plot_04_holdout_validation_rmse(
-        self, candidates: list[Any], best_degree: int, best_l2: float
+        self,
+        candidates: list[Any],
+        best_degree: int,
+        best_strength: float = 0.0,
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = "holdout"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
         fig, ax = plt.subplots(figsize=(8, 5))
         degrees = sorted({c.degree for c in candidates})
-        l2_values = sorted({c.l2_lambda for c in candidates})
+        strengths = sorted({c.regularization_strength for c in candidates})
+        reg_type = candidates[0].regularization if candidates else "l2"
 
-        for l2 in l2_values:
-            cands_l2 = [c for c in candidates if c.l2_lambda == l2]
-            cands_l2.sort(key=lambda c: c.degree)
-            degs = [c.degree for c in cands_l2]
-            rmses = [c.val_metrics.rmse for c in cands_l2]
+        for str_val in strengths:
+            cands_str = [c for c in candidates if c.regularization_strength == str_val]
+            cands_str.sort(key=lambda c: c.degree)
+            degs = [c.degree for c in cands_str]
+            rmses = [c.val_metrics.rmse for c in cands_str]
 
-            label_str = f"L2 = {l2}" if l2 > 0 else "OLS (L2 = 0)"
+            label_str = _format_reg_label(reg_type, str_val)
             ax.plot(degs, rmses, marker="o", label=label_str, alpha=0.8)
 
         # Mark selected
+        sel_cand = next(
+            c for c in candidates if c.degree == best_degree and c.regularization_strength == best_strength
+        )
+        sel_label = f"Selected (deg={best_degree}, {_format_reg_title_fragment(reg_type, best_strength)})"
         ax.plot(
             best_degree,
-            next(
-                c.val_metrics.rmse
-                for c in candidates
-                if c.degree == best_degree and c.l2_lambda == best_l2
-            ),
+            sel_cand.val_metrics.rmse,
             marker="*",
             markersize=14,
             color="red",
-            label=f"Selected (deg={best_degree}, L2={best_l2})",
+            label=sel_label,
         )
 
         title = f"04 {wf_disp}: Validation RMSE vs. Polynomial Degree"
@@ -387,24 +416,31 @@ class RegressionVisualizer:
             title,
             "Line Plot",
             wf_norm,
-            {"selected_degree": best_degree, "selected_l2": best_l2},
+            {"selected_degree": best_degree, "selected_regularization_strength": best_strength, "regularization": reg_type},
             "holdout_results.csv",
         )
 
     # 5. Holdout Train vs Validation Error
     def plot_05_train_validation_error(
-        self, candidates: list[Any], selected_l2: float, best_degree: int
+        self,
+        candidates: list[Any],
+        selected_strength: float = 0.0,
+        best_degree: int = 1,
+        selected_l2: float | None = None,
     ) -> pathlib.Path:
+        if selected_l2 is not None:
+            selected_strength = selected_l2
         wf_norm = "holdout"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
         fig, ax = plt.subplots(figsize=(8, 5))
-        cands_l2 = [c for c in candidates if c.l2_lambda == selected_l2]
-        cands_l2.sort(key=lambda c: c.degree)
+        cands_str = [c for c in candidates if c.regularization_strength == selected_strength]
+        cands_str.sort(key=lambda c: c.degree)
+        reg_type = candidates[0].regularization if candidates else "l2"
 
-        degs = [c.degree for c in cands_l2]
-        train_rmse = [c.train_metrics.rmse for c in cands_l2]
-        val_rmse = [c.val_metrics.rmse for c in cands_l2]
+        degs = [c.degree for c in cands_str]
+        train_rmse = [c.train_metrics.rmse for c in cands_str]
+        val_rmse = [c.val_metrics.rmse for c in cands_str]
 
         ax.plot(
             degs, train_rmse, "o--", color=self.colors["train"], label="Training RMSE"
@@ -418,7 +454,8 @@ class RegressionVisualizer:
             label=f"Selected Degree ({best_degree})",
         )
 
-        title = f"05 {wf_disp}: Bias-Variance Trade-off (L2 = {selected_l2})"
+        reg_frag = _format_reg_label(reg_type, selected_strength)
+        title = f"05 {wf_disp}: Bias-Variance Trade-off ({reg_frag})"
         ax.set_title(title)
         ax.set_xlabel("Polynomial Degree")
         ax.set_ylabel("RMSE")
@@ -433,22 +470,29 @@ class RegressionVisualizer:
             title,
             "Line Plot",
             wf_norm,
-            {"l2_lambda": selected_l2, "selected_degree": best_degree},
+            {"regularization_strength": selected_strength, "selected_degree": best_degree, "regularization": reg_type},
             "holdout_results.csv",
         )
 
     # 6. Holdout RMSE Heatmap
     def plot_06_holdout_rmse_heatmap(
-        self, candidates: list[Any], best_degree: int, best_l2: float
+        self,
+        candidates: list[Any],
+        best_degree: int,
+        best_strength: float = 0.0,
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = "holdout"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
-        title = f"06 {wf_disp}: Validation RMSE Heatmap"
+        reg_type = candidates[0].regularization.upper() if candidates else "L2"
+        title = f"06 {wf_disp}: Validation RMSE Heatmap, {reg_type}"
         filename_stem = _workflow_filename("06", wf_norm, "rmse_heatmap")
         return self._plot_rmse_heatmap(
             candidates,
             best_degree,
-            best_l2,
+            best_strength,
             title=title,
             filename=filename_stem,
             workflow=wf_norm,
@@ -464,7 +508,7 @@ class RegressionVisualizer:
         y_val: np.ndarray,
         candidate_curves: list[
             tuple[int, float, np.ndarray, np.ndarray]
-        ],  # (deg, l2, x_grid, y_grid)
+        ],  # (deg, strength, x_grid, y_grid)
     ) -> pathlib.Path:
         wf_norm = "holdout"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
@@ -483,8 +527,8 @@ class RegressionVisualizer:
             x_val, y_val, color=self.colors["val"], alpha=0.5, s=20, label="Val Data"
         )
 
-        for deg, l2, x_grid, y_grid in candidate_curves:
-            ax.plot(x_grid, y_grid, linewidth=2, label=f"Degree {deg} (L2={l2})")
+        for deg, str_val, x_grid, y_grid in candidate_curves:
+            ax.plot(x_grid, y_grid, linewidth=2, label=f"Degree {deg}, Strength={str_val}")
 
         title = f"07 {wf_disp}: Candidate Polynomial Models Comparison"
         ax.set_title(title)
@@ -579,38 +623,46 @@ class RegressionVisualizer:
 
     # 9. Cross-Validation Mean RMSE Plot with Error Bars
     def plot_09_kfold_mean_rmse(
-        self, candidates: list[Any], best_degree: int, best_l2: float
+        self,
+        candidates: list[Any],
+        best_degree: int,
+        best_strength: float = 0.0,
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = "kfold"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
         fig, ax = plt.subplots(figsize=(8, 5))
         degrees = sorted({c.degree for c in candidates})
-        l2_values = sorted({c.l2_lambda for c in candidates})
+        strengths = sorted({c.regularization_strength for c in candidates})
+        reg_type = candidates[0].regularization if candidates else "l2"
 
-        for l2 in l2_values:
-            cands_l2 = [c for c in candidates if c.l2_lambda == l2]
-            cands_l2.sort(key=lambda c: c.degree)
-            degs = [c.degree for c in cands_l2]
-            means = [c.mean_val_metrics.rmse for c in cands_l2]
-            stds = [c.std_val_metrics.rmse for c in cands_l2]
+        for str_val in strengths:
+            cands_str = [c for c in candidates if c.regularization_strength == str_val]
+            cands_str.sort(key=lambda c: c.degree)
+            degs = [c.degree for c in cands_str]
+            means = [c.mean_val_metrics.rmse for c in cands_str]
+            stds = [c.std_val_metrics.rmse for c in cands_str]
 
-            label_str = f"L2 = {l2}" if l2 > 0 else "OLS (L2 = 0)"
+            label_str = _format_reg_label(reg_type, str_val)
             ax.errorbar(
                 degs, means, yerr=stds, fmt="-o", capsize=4, label=label_str, alpha=0.8
             )
 
         # Mark selected
         sel_cand = next(
-            c for c in candidates if c.degree == best_degree and c.l2_lambda == best_l2
+            c for c in candidates if c.degree == best_degree and c.regularization_strength == best_strength
         )
+        sel_label = f"Selected (deg={best_degree}, {_format_reg_title_fragment(reg_type, best_strength)})"
         ax.plot(
             best_degree,
             sel_cand.mean_val_metrics.rmse,
             marker="*",
             markersize=14,
             color="red",
-            label=f"Selected (deg={best_degree}, L2={best_l2})",
+            label=sel_label,
         )
 
         title = f"09 {wf_disp}: Cross-Validation Mean RMSE ± 1 Std"
@@ -628,22 +680,29 @@ class RegressionVisualizer:
             title,
             "Errorbar Plot",
             wf_norm,
-            {"selected_degree": best_degree, "selected_l2": best_l2},
+            {"selected_degree": best_degree, "selected_regularization_strength": best_strength, "regularization": reg_type},
             "kfold_summary_results.csv",
         )
 
     # 10. K-Fold RMSE Heatmap
     def plot_10_kfold_rmse_heatmap(
-        self, candidates: list[Any], best_degree: int, best_l2: float
+        self,
+        candidates: list[Any],
+        best_degree: int,
+        best_strength: float = 0.0,
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = "kfold"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
-        title = f"10 {wf_disp}: Validation Mean RMSE Heatmap"
+        reg_type = candidates[0].regularization.upper() if candidates else "L2"
+        title = f"10 {wf_disp}: Validation Mean RMSE Heatmap, {reg_type}"
         filename_stem = _workflow_filename("10", wf_norm, "rmse_heatmap")
         return self._plot_rmse_heatmap(
             candidates,
             best_degree,
-            best_l2,
+            best_strength,
             title=title,
             filename=filename_stem,
             workflow=wf_norm,
@@ -652,16 +711,23 @@ class RegressionVisualizer:
 
     # 10b. K-Fold RMSE Std Heatmap
     def plot_10b_kfold_rmse_std_heatmap(
-        self, candidates: list[Any], best_degree: int, best_l2: float
+        self,
+        candidates: list[Any],
+        best_degree: int,
+        best_strength: float = 0.0,
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = "kfold"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
-        title = f"10b {wf_disp}: Validation RMSE Standard Deviation Heatmap"
+        reg_type = candidates[0].regularization.upper() if candidates else "L2"
+        title = f"10b {wf_disp}: Validation RMSE Standard Deviation Heatmap, {reg_type}"
         filename_stem = _workflow_filename("10b", wf_norm, "rmse_std_heatmap")
         return self._plot_rmse_heatmap(
             candidates,
             best_degree,
-            best_l2,
+            best_strength,
             title=title,
             filename=filename_stem,
             workflow=wf_norm,
@@ -675,8 +741,12 @@ class RegressionVisualizer:
         mean_rmse: float,
         std_rmse: float,
         degree: int,
-        l2: float,
+        strength: float = 0.0,
+        regularization: str = "l2",
+        l2: float | None = None,
     ) -> pathlib.Path:
+        if l2 is not None:
+            strength = l2
         wf_norm = "kfold"
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
@@ -711,7 +781,8 @@ class RegressionVisualizer:
         ax.set_xticks(folds)
         ax.set_xlabel("Fold Number")
         ax.set_ylabel("Validation RMSE")
-        title = f"11 {wf_disp}: Fold-by-Fold Performance (Degree={degree}, L2={l2})"
+        reg_frag = _format_reg_title_fragment(regularization, strength)
+        title = f"11 {wf_disp}: Fold-by-Fold Performance (Degree={degree}, {reg_frag})"
         ax.set_title(title)
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         ax.legend(loc="best")
@@ -723,7 +794,7 @@ class RegressionVisualizer:
             title,
             "Bar Chart",
             wf_norm,
-            {"degree": degree, "l2_lambda": l2, "mean_rmse": mean_rmse},
+            {"degree": degree, "regularization_strength": strength, "regularization": regularization, "mean_rmse": mean_rmse},
             "kfold_fold_results.csv",
         )
 
@@ -792,10 +863,14 @@ class RegressionVisualizer:
         x_grid: np.ndarray,
         y_grid: np.ndarray,
         degree: int,
-        l2: float,
-        test_metrics: EvaluationMetrics,
-        workflow: str,
+        strength: float = 0.0,
+        test_metrics: EvaluationMetrics = None,
+        workflow: str = "holdout",
+        regularization: str = "l2",
+        l2: float | None = None,
     ) -> pathlib.Path:
+        if l2 is not None:
+            strength = l2
         wf_norm = workflow.lower().strip()
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
@@ -813,15 +888,18 @@ class RegressionVisualizer:
             label="Untouched Test Data",
         )
 
+        reg_frag = _format_reg_title_fragment(regularization, strength)
         ax.plot(
             x_grid,
             y_grid,
             color=self.colors["fit"],
             linewidth=2.5,
-            label=f"Final Polynomial Fit (deg={degree}, L2={l2})",
+            label=f"Final Polynomial Fit (deg={degree}, {reg_frag})",
         )
 
-        title = f"13 {wf_disp}: Final Polynomial Fit on Development Data\nTest RMSE: {test_metrics.rmse:.3f} | Test R²: {test_metrics.r_squared:.3f}"
+        title_rmse = test_metrics.rmse if test_metrics else 0.0
+        title_r2 = test_metrics.r_squared if test_metrics else 0.0
+        title = f"13 {wf_disp}: Final Polynomial Fit on Development Data\nTest RMSE: {title_rmse:.3f} | Test R²: {title_r2:.3f}"
         ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
@@ -837,9 +915,10 @@ class RegressionVisualizer:
             wf_norm,
             {
                 "degree": degree,
-                "l2": l2,
-                "test_rmse": test_metrics.rmse,
-                "test_r2": test_metrics.r_squared,
+                "regularization": regularization,
+                "regularization_strength": strength,
+                "test_rmse": title_rmse,
+                "test_r2": title_r2,
             },
             "final_model.json",
         )
@@ -856,10 +935,14 @@ class RegressionVisualizer:
         lower_band: np.ndarray,
         upper_band: np.ndarray,
         degree: int,
-        l2: float,
-        num_bootstraps: int,
-        workflow: str,
+        strength: float = 0.0,
+        num_bootstraps: int = 100,
+        workflow: str = "holdout",
+        regularization: str = "l2",
+        l2: float | None = None,
     ) -> pathlib.Path:
+        if l2 is not None:
+            strength = l2
         wf_norm = workflow.lower().strip()
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
@@ -893,7 +976,8 @@ class RegressionVisualizer:
             label=f"95% bootstrap fitted-curve uncertainty band ({num_bootstraps} resamples)",
         )
 
-        title = f"13b {wf_disp}: Bootstrap Fitted-Curve Uncertainty Band (deg={degree}, L2={l2})"
+        reg_frag = _format_reg_title_fragment(regularization, strength)
+        title = f"13b {wf_disp}: Bootstrap Fitted-Curve Uncertainty Band (deg={degree}, {reg_frag})"
         ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
@@ -911,7 +995,8 @@ class RegressionVisualizer:
             wf_norm,
             {
                 "degree": degree,
-                "l2": l2,
+                "regularization": regularization,
+                "regularization_strength": strength,
                 "bootstrap_samples": num_bootstraps,
                 "lower_percentile": 2.5,
                 "upper_percentile": 97.5,
@@ -1171,7 +1256,13 @@ class RegressionVisualizer:
 
     # 18. Model Coefficients Plot
     def plot_18_model_coefficients(
-        self, beta: np.ndarray, is_original_basis: bool, workflow: str
+        self,
+        beta: np.ndarray,
+        is_original_basis: bool,
+        workflow: str,
+        regularization: str = "l2",
+        regularization_strength: float = 0.0,
+        nonzero_coefficient_count: int | None = None,
     ) -> pathlib.Path:
         wf_norm = workflow.lower().strip()
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
@@ -1206,6 +1297,15 @@ class RegressionVisualizer:
         ax.set_ylabel("Coefficient Value")
         ax.grid(axis="y", linestyle="--", alpha=0.5)
 
+        params = {
+            "degree": len(beta) - 1,
+            "is_original_basis": is_original_basis,
+            "regularization": regularization,
+            "regularization_strength": regularization_strength,
+        }
+        if nonzero_coefficient_count is not None:
+            params["nonzero_coefficient_count"] = nonzero_coefficient_count
+
         filename_stem = _workflow_filename("18", wf_norm, "model_coefficients")
         return self._save_and_close(
             fig,
@@ -1213,7 +1313,7 @@ class RegressionVisualizer:
             title,
             "Bar Chart",
             wf_norm,
-            {"degree": len(beta) - 1, "is_original_basis": is_original_basis},
+            params,
             "final_model.json",
         )
 
@@ -1224,6 +1324,7 @@ class RegressionVisualizer:
         cond_numbers: list[float],
         threshold: float,
         workflow: str,
+        regularization: str = "l2",
     ) -> pathlib.Path:
         wf_norm = workflow.lower().strip()
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
@@ -1247,7 +1348,7 @@ class RegressionVisualizer:
         ax.set_yscale("log")
         ax.set_xticks(degrees)
         ax.set_xlabel("Polynomial Degree")
-        ax.set_ylabel("Condition Number (Log Scale)")
+        ax.set_ylabel("Design Matrix Condition Number (Log Scale)")
         title = f"19 {wf_disp}: Design Matrix Condition Number vs. Degree"
         ax.set_title(title)
         ax.grid(True, which="both", linestyle="--", alpha=0.5)
@@ -1260,7 +1361,7 @@ class RegressionVisualizer:
             title,
             "Line Plot (Log)",
             wf_norm,
-            {"threshold": threshold, "max_cond": max(cond_numbers)},
+            {"threshold": threshold, "max_cond": max(cond_numbers), "regularization": regularization},
             "holdout_results.csv"
             if wf_norm == "holdout"
             else "kfold_summary_results.csv",
@@ -1279,14 +1380,20 @@ class RegressionVisualizer:
         test_residuals: np.ndarray,
         candidates: list[Any],
         best_degree: int,
-        best_l2: float,
-        test_metrics: EvaluationMetrics,
-        workflow: str,
+        best_strength: float = 0.0,
+        test_metrics: EvaluationMetrics = None,
+        workflow: str = "holdout",
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = workflow.lower().strip()
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+        reg_type = candidates[0].regularization if candidates else "l2"
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
+
+        reg_frag = _format_reg_title_fragment(reg_type, best_strength)
 
         # Panel 1: Final Polynomial Fit
         ax1.scatter(
@@ -1302,7 +1409,7 @@ class RegressionVisualizer:
             linewidth=2,
             label="Polynomial Fit",
         )
-        ax1.set_title(f"1. Final Fit (deg={best_degree}, L2={best_l2})")
+        ax1.set_title(f"1. Final Fit (deg={best_degree}, {reg_frag})")
         ax1.set_xlabel("X")
         ax1.set_ylabel("Y")
         ax1.grid(True, linestyle="--", alpha=0.5)
@@ -1320,7 +1427,8 @@ class RegressionVisualizer:
         min_v = min(np.min(y_test), np.min(y_test_pred))
         max_v = max(np.max(y_test), np.max(y_test_pred))
         ax2.plot([min_v, max_v], [min_v, max_v], "r--")
-        ax2.set_title(f"2. Actual vs. Predicted (RMSE={test_metrics.rmse:.3f})")
+        rmse_val = test_metrics.rmse if test_metrics else 0.0
+        ax2.set_title(f"2. Actual vs. Predicted (RMSE={rmse_val:.3f})")
         ax2.set_xlabel("Actual Test Y")
         ax2.set_ylabel("Predicted Test Y")
         ax2.grid(True, linestyle="--", alpha=0.5)
@@ -1341,18 +1449,18 @@ class RegressionVisualizer:
         ax3.grid(True, linestyle="--", alpha=0.5)
 
         # Panel 4: Model Selection Curve
-        cands_l2 = [c for c in candidates if c.l2_lambda == best_l2]
-        cands_l2.sort(key=lambda c: c.degree)
-        degs = [c.degree for c in cands_l2]
+        cands_str = [c for c in candidates if c.regularization_strength == best_strength]
+        cands_str.sort(key=lambda c: c.degree)
+        degs = [c.degree for c in cands_str]
 
-        if hasattr(cands_l2[0], "val_metrics"):
-            rmses = [c.val_metrics.rmse for c in cands_l2]
+        if hasattr(cands_str[0], "val_metrics"):
+            rmses = [c.val_metrics.rmse for c in cands_str]
         else:
-            rmses = [c.mean_val_metrics.rmse for c in cands_l2]
+            rmses = [c.mean_val_metrics.rmse for c in cands_str]
 
         ax4.plot(degs, rmses, "o-", color=self.colors["train"])
         ax4.axvline(best_degree, color="red", linestyle=":")
-        ax4.set_title(f"4. Selection Curve (L2={best_l2})")
+        ax4.set_title(f"4. Selection Curve ({reg_frag})")
         ax4.set_xlabel("Polynomial Degree")
         ax4.set_ylabel("Validation RMSE")
         ax4.grid(True, linestyle="--", alpha=0.5)
@@ -1368,7 +1476,7 @@ class RegressionVisualizer:
             title,
             "Dashboard (4-panel)",
             wf_norm,
-            {"degree": best_degree, "l2": best_l2, "test_rmse": test_metrics.rmse},
+            {"degree": best_degree, "regularization_strength": best_strength, "regularization": reg_type, "test_rmse": rmse_val},
             "final_model.json",
         )
 
@@ -1377,25 +1485,29 @@ class RegressionVisualizer:
         self,
         candidates: list[Any],
         best_degree: int,
-        best_l2: float,
-        title: str,
-        filename: str,
-        workflow: str,
-        rmse_extractor: Any,
+        best_strength: float = 0.0,
+        title: str = "",
+        filename: str = "",
+        workflow: str = "holdout",
+        rmse_extractor: Any = None,
+        best_l2: float | None = None,
     ) -> pathlib.Path:
+        if best_l2 is not None:
+            best_strength = best_l2
         wf_norm = workflow.lower().strip()
 
         fig, ax = plt.subplots(figsize=(8, 6))
 
         degrees = sorted({c.degree for c in candidates})
-        l2_values = sorted({c.l2_lambda for c in candidates})
+        strengths = sorted({c.regularization_strength for c in candidates})
+        reg_type = candidates[0].regularization if candidates else "l2"
 
-        heatmap_data = np.zeros((len(l2_values), len(degrees)), dtype=np.float64)
+        heatmap_data = np.zeros((len(strengths), len(degrees)), dtype=np.float64)
 
-        for i, l2 in enumerate(l2_values):
+        for i, str_val in enumerate(strengths):
             for j, deg in enumerate(degrees):
                 cand = next(
-                    c for c in candidates if c.degree == deg and c.l2_lambda == l2
+                    c for c in candidates if c.degree == deg and c.regularization_strength == str_val
                 )
                 heatmap_data[i, j] = rmse_extractor(cand)
 
@@ -1406,8 +1518,8 @@ class RegressionVisualizer:
         cbar.set_label("Validation RMSE")
 
         # Annotate text
-        if len(degrees) * len(l2_values) <= 100:
-            for i in range(len(l2_values)):
+        if len(degrees) * len(strengths) <= 100:
+            for i in range(len(strengths)):
                 for j in range(len(degrees)):
                     val = heatmap_data[i, j]
                     ax.text(
@@ -1422,17 +1534,17 @@ class RegressionVisualizer:
 
         # Labels
         ax.set_xticks(np.arange(len(degrees)))
-        ax.set_yticks(np.arange(len(l2_values)))
+        ax.set_yticks(np.arange(len(strengths)))
 
         ax.set_xticklabels(degrees)
-        ax.set_yticklabels([f"{l2}" if l2 > 0 else "0 (OLS)" for l2 in l2_values])
+        ax.set_yticklabels([_format_reg_label(reg_type, str_val) for str_val in strengths])
 
         ax.set_xlabel("Polynomial Degree")
-        ax.set_ylabel("L2 Regularization Strength")
+        ax.set_ylabel("Regularization Strength")
         ax.set_title(title)
 
         # Highlight best cell
-        best_i = l2_values.index(best_l2)
+        best_i = strengths.index(best_strength)
         best_j = degrees.index(best_degree)
         ax.add_patch(
             plt.Rectangle(
@@ -1451,7 +1563,7 @@ class RegressionVisualizer:
             title,
             "Heatmap",
             wf_norm,
-            {"selected_degree": best_degree, "selected_l2": best_l2},
+            {"selected_degree": best_degree, "selected_regularization_strength": best_strength, "regularization": reg_type},
             "holdout_results.csv"
             if wf_norm == "holdout"
             else "kfold_summary_results.csv",
