@@ -1,9 +1,64 @@
-"""Polynomial Regressor module supporting OLS and L2 Ridge regularization."""
+"""Polynomial Regressor module supporting OLS, L1 (Lasso), and L2 (Ridge) regularization."""
 
 import warnings
 from dataclasses import dataclass
 
 import numpy as np
+
+REGULARIZATION_NONE = "none"
+REGULARIZATION_L1 = "l1"
+REGULARIZATION_L2 = "l2"
+
+SUPPORTED_REGULARIZATIONS = {
+    REGULARIZATION_NONE,
+    REGULARIZATION_L1,
+    REGULARIZATION_L2,
+}
+
+DEFAULT_REGULARIZATION_STRENGTHS = [
+    0.0,
+    1e-6,
+    1e-4,
+    1e-2,
+    0.1,
+    1.0,
+    10.0,
+    100.0,
+]
+
+DEFAULT_L1_MAX_ITERATIONS = 10_000
+DEFAULT_L1_TOLERANCE = 1e-8
+DEFAULT_L1_INITIALIZATION = "zeros"
+
+
+def soft_threshold(value: float, threshold: float) -> float:
+    """Soft-thresholding operator S(value, threshold).
+
+    S(v, t) = sign(v) * max(|v| - t, 0)
+    """
+    try:
+        val = float(value)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Value must be numeric, got {value}.") from exc
+
+    try:
+        thresh = float(threshold)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Threshold must be numeric, got {threshold}.") from exc
+
+    if not np.isfinite(val):
+        raise ValueError("Value for soft_threshold must be finite.")
+
+    if not np.isfinite(thresh) or thresh < 0.0:
+        raise ValueError(
+            f"Threshold for soft_threshold must be finite and non-negative (>= 0.0), got {threshold}."
+        )
+
+    if val > thresh:
+        return val - thresh
+    if val < -thresh:
+        return val + thresh
+    return 0.0
 
 
 @dataclass(frozen=True)
@@ -18,29 +73,105 @@ class ModelFitDetails:
     full_rank: bool
     design_condition_number: float
     solver_condition_number: float
+    requested_regularization: str
+    effective_regularization: str
+    regularization_strength: float
+    iterations: int | None = None
+    converged: bool | None = None
+    final_objective: float | None = None
+    max_coefficient_change: float | None = None
+    nonzero_coefficient_count: int = 0
+    l1_initialization: str | None = None
 
 
 class PolynomialRegressor:
-    """Polynomial Regressor supporting Ordinary Least Squares (OLS) and L2 regularization (Ridge).
+    """Polynomial Regressor supporting OLS, L1 (Lasso), and L2 (Ridge) regularization.
 
     Fits beta solving:
-        OLS (l2_lambda == 0): np.linalg.lstsq(X, y)
-        Ridge (l2_lambda > 0): np.linalg.lstsq(X_aug, y_aug) with unregularized intercept.
+        OLS (regularization='none' or strength==0): np.linalg.lstsq(X, y)
+        Ridge (regularization='l2' and strength>0): np.linalg.lstsq(X_aug, y_aug) with unregularized intercept.
+        Lasso (regularization='l1' and strength>0): cyclic coordinate descent with unregularized intercept.
     """
 
     def __init__(
         self,
-        l2_lambda: float = 0.0,
+        regularization: str = REGULARIZATION_NONE,
+        regularization_strength: float = 0.0,
+        l2_lambda: float | None = None,
+        l1_max_iterations: int = DEFAULT_L1_MAX_ITERATIONS,
+        l1_tolerance: float = DEFAULT_L1_TOLERANCE,
+        l1_initialization: str = DEFAULT_L1_INITIALIZATION,
         condition_warning_threshold: float = 1e12,
+        coefficient_zero_tolerance: float = 1e-12,
     ):
-        try:
-            l2_val = float(l2_lambda)
-        except (ValueError, TypeError) as exc:
-            raise ValueError(f"L2 lambda must be numeric, got {l2_lambda}.") from exc
+        if l2_lambda is not None:
+            reg_type = REGULARIZATION_L2
+            reg_strength = l2_lambda
+        else:
+            reg_type = regularization
+            reg_strength = regularization_strength
 
-        if not np.isfinite(l2_val) or l2_val < 0.0:
+        if not isinstance(reg_type, str):
             raise ValueError(
-                f"L2 regularization lambda must be finite and >= 0.0, got {l2_lambda}."
+                f"Regularization type must be a string, got {type(reg_type).__name__}."
+            )
+
+        norm_reg = reg_type.strip().lower()
+        if norm_reg not in SUPPORTED_REGULARIZATIONS:
+            raise ValueError(
+                f"Unsupported regularization type '{reg_type}'. Supported choices: {sorted(SUPPORTED_REGULARIZATIONS)}."
+            )
+
+        try:
+            strength_val = float(reg_strength)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"Regularization strength must be numeric, got {reg_strength}."
+            ) from exc
+
+        if not np.isfinite(strength_val) or strength_val < 0.0:
+            raise ValueError(
+                f"Regularization strength must be finite and >= 0.0, got {reg_strength}."
+            )
+
+        if norm_reg == REGULARIZATION_NONE and strength_val != 0.0:
+            raise ValueError(
+                f"Regularization strength must be 0.0 for 'none' regularization; received {strength_val}."
+            )
+
+        try:
+            max_iters_val = int(l1_max_iterations)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"L1 max iterations must be an integer, got {l1_max_iterations}."
+            ) from exc
+
+        if max_iters_val < 1:
+            raise ValueError(
+                f"L1 maximum iterations must be a positive integer (>= 1); received {l1_max_iterations}."
+            )
+
+        try:
+            tol_val = float(l1_tolerance)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"L1 tolerance must be numeric, got {l1_tolerance}."
+            ) from exc
+
+        if not np.isfinite(tol_val) or tol_val <= 0.0:
+            raise ValueError(
+                f"L1 convergence tolerance must be finite and strictly positive (> 0.0); received {l1_tolerance}."
+            )
+
+        if not isinstance(l1_initialization, str):
+            raise ValueError(
+                f"L1 initialization must be a string, got {type(l1_initialization).__name__}."
+            )
+
+        norm_init = l1_initialization.strip().lower()
+        if norm_init not in {"zeros", "ols"}:
+            raise ValueError(
+                f"Unsupported L1 initialization '{l1_initialization}'. Supported choices: 'zeros', 'ols'."
             )
 
         try:
@@ -55,11 +186,36 @@ class PolynomialRegressor:
                 f"Condition warning threshold must be finite and strictly positive (> 0.0), got {condition_warning_threshold}."
             )
 
-        self.l2_lambda = l2_val
+        try:
+            zero_tol_val = float(coefficient_zero_tolerance)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                f"Coefficient zero tolerance must be numeric, got {coefficient_zero_tolerance}."
+            ) from exc
+
+        if not np.isfinite(zero_tol_val) or zero_tol_val < 0.0:
+            raise ValueError(
+                f"Coefficient zero tolerance must be finite and >= 0.0, got {coefficient_zero_tolerance}."
+            )
+
+        self.regularization = norm_reg
+        self.regularization_strength = strength_val
+        self.l1_max_iterations = max_iters_val
+        self.l1_tolerance = tol_val
+        self.l1_initialization = norm_init
         self.condition_warning_threshold = thresh_val
+        self.coefficient_zero_tolerance = zero_tol_val
 
         self.beta: np.ndarray | None = None
         self.fit_details: ModelFitDetails | None = None
+
+    @property
+    def l2_lambda(self) -> float:
+        if self.regularization != REGULARIZATION_L2:
+            raise AttributeError(
+                "l2_lambda is available only for L2 models."
+            )
+        return self.regularization_strength
 
     def _validate_fit_inputs(
         self, X: np.ndarray, y: np.ndarray
@@ -127,14 +283,27 @@ class PolynomialRegressor:
             )
 
         design_cond = float(np.linalg.cond(X_arr))
+        requested_reg = self.regularization
+        strength = self.regularization_strength
 
-        if self.l2_lambda == 0.0:
+        iterations: int | None = None
+        converged: bool | None = None
+        max_coeff_change: float | None = None
+        l1_init_used: str | None = None
+
+        if requested_reg == REGULARIZATION_NONE or strength == 0.0:
+            effective_reg = REGULARIZATION_NONE
             solver_used = "lstsq_ols"
             beta, _, rank, _ = np.linalg.lstsq(X_arr, y_arr, rcond=None)
             solver_cond = design_cond
-        else:
+            iterations = None
+            converged = True
+            max_coeff_change = None
+            final_obj = 0.5 * float(np.sum((X_arr @ beta - y_arr) ** 2))
+        elif requested_reg == REGULARIZATION_L2:
+            effective_reg = REGULARIZATION_L2
             solver_used = "lstsq_augmented_ridge"
-            sqrt_lambda = np.sqrt(self.l2_lambda)
+            sqrt_lambda = np.sqrt(strength)
             penalty = np.eye(num_features, dtype=np.float64)
             penalty[0, 0] = 0.0  # Do NOT regularize intercept
 
@@ -145,6 +314,73 @@ class PolynomialRegressor:
                 X_aug, y_aug, rcond=None
             )
             solver_cond = float(np.linalg.cond(X_aug))
+            iterations = None
+            converged = True
+            max_coeff_change = None
+            final_obj = 0.5 * float(np.sum((X_arr @ beta - y_arr) ** 2)) + 0.5 * strength * float(
+                np.sum(beta[1:] ** 2)
+            )
+        elif requested_reg == REGULARIZATION_L1:
+            effective_reg = REGULARIZATION_L1
+            solver_used = "coordinate_descent_l1"
+            l1_init_used = self.l1_initialization
+            solver_cond = design_cond
+            rank = np.linalg.matrix_rank(X_arr)
+
+            if self.l1_initialization == "zeros":
+                beta = np.zeros(num_features, dtype=np.float64)
+            else:  # 'ols'
+                beta, _, _, _ = np.linalg.lstsq(X_arr, y_arr, rcond=None)
+
+            col_norm_sq = np.sum(X_arr ** 2, axis=0)
+            residual = y_arr - X_arr @ beta
+            converged = False
+            last_max_change = 0.0
+
+            for iteration in range(1, self.l1_max_iterations + 1):
+                max_change = 0.0
+                for j in range(num_features):
+                    denom = col_norm_sq[j]
+                    if denom == 0.0:
+                        new_beta_j = 0.0
+                    else:
+                        residual += X_arr[:, j] * beta[j]
+                        rho = X_arr[:, j] @ residual
+                        if j == 0:
+                            new_beta_j = rho / denom
+                        else:
+                            new_beta_j = (
+                                soft_threshold(rho, strength) / denom
+                            )
+                        residual -= X_arr[:, j] * new_beta_j
+
+                    change = abs(new_beta_j - beta[j])
+                    if change > max_change:
+                        max_change = change
+                    beta[j] = new_beta_j
+
+                last_max_change = max_change
+                if max_change <= self.l1_tolerance:
+                    converged = True
+                    iterations = iteration
+                    break
+            else:
+                iterations = self.l1_max_iterations
+
+            max_coeff_change = float(last_max_change)
+
+            if not converged:
+                warnings.warn(
+                    f"L1 coordinate descent did not converge within {self.l1_max_iterations} iterations. "
+                    f"Final maximum coefficient change: {max_coeff_change:.4e}.",
+                    UserWarning,
+                )
+
+            final_obj = 0.5 * float(np.sum((X_arr @ beta - y_arr) ** 2)) + strength * float(
+                np.sum(np.abs(beta[1:]))
+            )
+        else:
+            raise ValueError(f"Unhandled regularization type '{requested_reg}'.")
 
         rank_val = int(rank)
         full_rank = bool(rank_val == num_features)
@@ -168,6 +404,15 @@ class PolynomialRegressor:
                 "Fitted model coefficients contain non-finite values."
             )
 
+        if not np.isfinite(final_obj):
+            raise FloatingPointError("Final objective value is non-finite.")
+
+        nonzero_count = int(
+            np.count_nonzero(
+                np.abs(beta[1:]) > self.coefficient_zero_tolerance
+            )
+        )
+
         self.beta = beta
         self.fit_details = ModelFitDetails(
             coefficients=beta,
@@ -178,6 +423,15 @@ class PolynomialRegressor:
             full_rank=full_rank,
             design_condition_number=design_cond,
             solver_condition_number=solver_cond,
+            requested_regularization=requested_reg,
+            effective_regularization=effective_reg,
+            regularization_strength=strength,
+            iterations=iterations,
+            converged=converged,
+            final_objective=final_obj,
+            max_coefficient_change=max_coeff_change,
+            nonzero_coefficient_count=nonzero_count,
+            l1_initialization=l1_init_used,
         )
         return self
 
