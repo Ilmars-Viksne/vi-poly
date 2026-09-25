@@ -1,10 +1,15 @@
 """Serialization and reporting generator for numerical outputs and plot manifests."""
 
+import argparse
 import csv
+import hashlib
 import json
 import pathlib
+import platform
+import sys
 from typing import Any
 
+import matplotlib
 import numpy as np
 
 from .metrics import EvaluationMetrics
@@ -12,12 +17,126 @@ from .regression import ModelFitDetails
 from .selection import HoldoutSelectionResult, KFoldSelectionResult
 
 
+def _validate_equal_lengths(arrays: dict[str, np.ndarray]) -> int:
+    """Validates that all supplied 1D arrays have identical non-zero lengths and finite numeric values."""
+    lengths = {name: len(values) for name, values in arrays.items()}
+    unique_lengths = set(lengths.values())
+
+    if len(unique_lengths) != 1:
+        raise ValueError(f"Report arrays must have equal lengths; received {lengths}.")
+
+    n = next(iter(unique_lengths))
+    if n == 0:
+        raise ValueError("Report arrays must not be empty.")
+
+    for name, arr in arrays.items():
+        arr_np = np.asarray(arr)
+        if arr_np.ndim != 1:
+            raise ValueError(
+                f"Array '{name}' must be 1D; received shape {arr_np.shape}."
+            )
+        if not np.all(np.isfinite(arr_np)):
+            non_finite_count = int(np.sum(~np.isfinite(arr_np)))
+            raise ValueError(
+                f"Array '{name}' contains {non_finite_count} non-finite value(s)."
+            )
+
+    return n
+
+
 class ReportGenerator:
     """Handles serialization of numerical outputs into CSV and JSON files."""
 
     def __init__(self, output_dir: pathlib.Path):
-        self.output_dir = output_dir
+        self.output_dir = pathlib.Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def write_run_metadata(
+        self,
+        args: argparse.Namespace,
+        csv_filepath: str | pathlib.Path,
+    ) -> pathlib.Path:
+        filepath = self.output_dir / "run_metadata.json"
+        csv_path = pathlib.Path(csv_filepath)
+
+        input_file_meta = None
+        if csv_path.exists() and csv_path.is_file():
+            size_bytes = csv_path.stat().st_size
+            digest = hashlib.sha256()
+            with open(csv_path, "rb") as f:
+                for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            input_file_meta = {
+                "path": str(csv_path),
+                "size_bytes": size_bytes,
+                "sha256": digest.hexdigest(),
+            }
+
+        raw_argv = getattr(args, "_raw_argv", None)
+        if raw_argv is not None:
+            argv = ["main.py", *raw_argv]
+        else:
+            argv = sys.argv[:]
+
+        parsed_args_dict = {}
+        for k, v in vars(args).items():
+            if not k.startswith("_"):
+                parsed_args_dict[k] = v
+
+        req_degrees = getattr(args, "_requested_degrees", getattr(args, "degrees", []))
+        req_l2 = getattr(args, "_requested_l2_values", getattr(args, "l2_values", []))
+        eff_degrees = getattr(args, "degrees", [])
+        eff_l2 = getattr(args, "l2_values", [])
+
+        duplicates_removed = (
+            len(req_degrees) != len(eff_degrees)
+            or len(req_l2) != len(eff_l2)
+            or list(req_degrees) != list(eff_degrees)
+            or list(req_l2) != list(eff_l2)
+        )
+
+        metadata = {
+            "schema_version": 1,
+            "command": {
+                "argv": argv,
+                "arguments": parsed_args_dict,
+            },
+            "runtime": {
+                "python_version": platform.python_version(),
+                "python_implementation": platform.python_implementation(),
+                "platform": platform.platform(),
+            },
+            "packages": {
+                "numpy": np.__version__,
+                "matplotlib": matplotlib.__version__,
+            },
+            "search_grid": {
+                "requested": {
+                    "degrees": req_degrees,
+                    "l2_values": req_l2,
+                },
+                "effective": {
+                    "degrees": eff_degrees,
+                    "l2_values": eff_l2,
+                },
+                "canonicalization": {
+                    "duplicates_removed": duplicates_removed,
+                    "ordering": "ascending",
+                    "float_deduplication": "exact_equality",
+                },
+            },
+            "random_seeds": {
+                "split_seed": getattr(args, "seed", None),
+                "kfold_seed": getattr(args, "seed", None),
+                "bootstrap_seed": getattr(args, "bootstrap_seed", None),
+            },
+            "input_file": input_file_meta,
+        }
+
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2, sort_keys=True)
+
+        return filepath
 
     def write_split_summary(
         self,
@@ -30,10 +149,97 @@ class ReportGenerator:
         val_indices: np.ndarray,
         test_indices: np.ndarray,
         dev_indices: np.ndarray,
-        fold_assignments: dict[int, list[int]] | None = None,
-        skipped_rows: list[tuple] | None = None,
+        train_observation_indices: np.ndarray | None = None,
+        val_observation_indices: np.ndarray | None = None,
+        test_observation_indices: np.ndarray | None = None,
+        dev_observation_indices: np.ndarray | None = None,
+        train_csv_line_numbers: np.ndarray | None = None,
+        val_csv_line_numbers: np.ndarray | None = None,
+        test_csv_line_numbers: np.ndarray | None = None,
+        dev_csv_line_numbers: np.ndarray | None = None,
+        fold_assignments: dict[str, list[int]] | None = None,
+        skipped_rows: list[Any] | None = None,
     ) -> pathlib.Path:
         filepath = self.output_dir / "split_summary.json"
+
+        # Fall back to loaded_array_indices if provenance arrays are omitted
+        tr_obs = (
+            train_observation_indices.tolist()
+            if train_observation_indices is not None
+            else train_indices.tolist()
+        )
+        v_obs = (
+            val_observation_indices.tolist()
+            if val_observation_indices is not None
+            else val_indices.tolist()
+        )
+        te_obs = (
+            test_observation_indices.tolist()
+            if test_observation_indices is not None
+            else test_indices.tolist()
+        )
+        d_obs = (
+            dev_observation_indices.tolist()
+            if dev_observation_indices is not None
+            else dev_indices.tolist()
+        )
+
+        tr_line = (
+            train_csv_line_numbers.tolist()
+            if train_csv_line_numbers is not None
+            else (train_indices + 2).tolist()
+        )
+        v_line = (
+            val_csv_line_numbers.tolist()
+            if val_csv_line_numbers is not None
+            else (val_indices + 2).tolist()
+        )
+        te_line = (
+            test_csv_line_numbers.tolist()
+            if test_csv_line_numbers is not None
+            else (test_indices + 2).tolist()
+        )
+        d_line = (
+            dev_csv_line_numbers.tolist()
+            if dev_csv_line_numbers is not None
+            else (dev_indices + 2).tolist()
+        )
+
+        formatted_skipped = []
+        for r in skipped_rows or []:
+            if hasattr(r, "observation_index") and hasattr(r, "csv_line_number"):
+                formatted_skipped.append(
+                    {
+                        "observation_index": r.observation_index,
+                        "csv_line_number": r.csv_line_number,
+                        "columns": r.columns,
+                        "reason": r.reason,
+                    }
+                )
+            elif isinstance(r, dict):
+                formatted_skipped.append(
+                    {
+                        "observation_index": r.get(
+                            "observation_index", r.get("row_num", 0)
+                        ),
+                        "csv_line_number": r.get(
+                            "csv_line_number", r.get("row_num", 1)
+                        ),
+                        "columns": r.get("columns", ""),
+                        "reason": r.get("reason", ""),
+                    }
+                )
+            elif isinstance(r, (list, tuple)):
+                row_n = r[0]
+                formatted_skipped.append(
+                    {
+                        "observation_index": row_n - 2 if row_n >= 2 else 0,
+                        "csv_line_number": row_n,
+                        "columns": r[1] if len(r) > 1 else "",
+                        "reason": r[2] if len(r) > 2 else "",
+                    }
+                )
+
         summary = {
             "random_seed": seed,
             "split_ratios": {
@@ -49,16 +255,27 @@ class ReportGenerator:
                 "development_count": len(dev_indices),
             },
             "indices": {
-                "train_indices": train_indices.tolist(),
-                "validation_indices": val_indices.tolist(),
-                "test_indices": test_indices.tolist(),
-                "development_indices": dev_indices.tolist(),
+                "loaded_array_indices": {
+                    "train": train_indices.tolist(),
+                    "validation": val_indices.tolist(),
+                    "test": test_indices.tolist(),
+                    "development": dev_indices.tolist(),
+                },
+                "observation_indices": {
+                    "train": tr_obs,
+                    "validation": v_obs,
+                    "test": te_obs,
+                    "development": d_obs,
+                },
+                "csv_line_numbers": {
+                    "train": tr_line,
+                    "validation": v_line,
+                    "test": te_line,
+                    "development": d_line,
+                },
             },
             "fold_assignments": fold_assignments or {},
-            "skipped_rows": [
-                {"row_num": r[0], "columns": r[1], "reason": r[2]}
-                for r in (skipped_rows or [])
-            ],
+            "skipped_rows": formatted_skipped,
         }
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(summary, f, indent=2)
@@ -229,6 +446,7 @@ class ReportGenerator:
                 "r_squared": test_metrics.r_squared,
                 "adjusted_r_squared": test_metrics.adjusted_r_squared,
             },
+            "run_metadata_file": "../common/run_metadata.json",
         }
 
         with open(filepath, "w", encoding="utf-8") as f:
@@ -238,28 +456,55 @@ class ReportGenerator:
 
     def write_test_predictions(
         self,
-        original_indices: np.ndarray,
+        observation_indices: np.ndarray,
+        csv_line_numbers: np.ndarray,
         x_test: np.ndarray,
         y_test: np.ndarray,
         test_preds: np.ndarray,
         test_residuals: np.ndarray,
     ) -> pathlib.Path:
         filepath = self.output_dir / "test_predictions.csv"
-        fieldnames = ["original_csv_index", "X", "actual_Y", "predicted_Y", "residual"]
+        _validate_equal_lengths(
+            {
+                "observation_indices": observation_indices,
+                "csv_line_numbers": csv_line_numbers,
+                "x_test": x_test,
+                "y_test": y_test,
+                "test_preds": test_preds,
+                "test_residuals": test_residuals,
+            }
+        )
+
+        obs_arr = np.asarray(observation_indices, dtype=np.int64)
+        line_arr = np.asarray(csv_line_numbers, dtype=np.int64)
+        if np.any(obs_arr < 0):
+            raise ValueError("observation_indices must contain non-negative integers.")
+        if np.any(line_arr < 1):
+            raise ValueError("csv_line_numbers must contain positive integers.")
+
+        fieldnames = [
+            "observation_index",
+            "csv_line_number",
+            "X",
+            "actual_Y",
+            "predicted_Y",
+            "residual",
+        ]
 
         with open(filepath, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for orig_idx, xi, yi, pi, ri in zip(
-                original_indices, x_test, y_test, test_preds, test_residuals
+            for obs_idx, line_num, xi, yi, pi, ri in zip(
+                obs_arr, line_arr, x_test, y_test, test_preds, test_residuals
             ):
                 writer.writerow(
                     {
-                        "original_csv_index": orig_idx,
-                        "X": xi,
-                        "actual_Y": yi,
-                        "predicted_Y": pi,
-                        "residual": ri,
+                        "observation_index": int(obs_idx),
+                        "csv_line_number": int(line_num),
+                        "X": float(xi),
+                        "actual_Y": float(yi),
+                        "predicted_Y": float(pi),
+                        "residual": float(ri),
                     }
                 )
 
@@ -267,7 +512,8 @@ class ReportGenerator:
 
     def write_oof_predictions(
         self,
-        original_dev_indices: np.ndarray,
+        observation_indices: np.ndarray,
+        csv_line_numbers: np.ndarray,
         dev_fold_assignments: np.ndarray,
         x_dev: np.ndarray,
         y_dev: np.ndarray,
@@ -275,8 +521,32 @@ class ReportGenerator:
         oof_residuals: np.ndarray,
     ) -> pathlib.Path:
         filepath = self.output_dir / "out_of_fold_predictions.csv"
+        _validate_equal_lengths(
+            {
+                "observation_indices": observation_indices,
+                "csv_line_numbers": csv_line_numbers,
+                "dev_fold_assignments": dev_fold_assignments,
+                "x_dev": x_dev,
+                "y_dev": y_dev,
+                "oof_preds": oof_preds,
+                "oof_residuals": oof_residuals,
+            }
+        )
+
+        obs_arr = np.asarray(observation_indices, dtype=np.int64)
+        line_arr = np.asarray(csv_line_numbers, dtype=np.int64)
+        fold_arr = np.asarray(dev_fold_assignments, dtype=np.int64)
+
+        if np.any(obs_arr < 0):
+            raise ValueError("observation_indices must contain non-negative integers.")
+        if np.any(line_arr < 1):
+            raise ValueError("csv_line_numbers must contain positive integers.")
+        if np.any(fold_arr < 1):
+            raise ValueError("fold_number values must be positive integers.")
+
         fieldnames = [
-            "original_csv_index",
+            "observation_index",
+            "csv_line_number",
             "fold_number",
             "X",
             "actual_Y",
@@ -287,9 +557,10 @@ class ReportGenerator:
         with open(filepath, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
-            for orig_idx, fold_num, xi, yi, pi, ri in zip(
-                original_dev_indices,
-                dev_fold_assignments,
+            for obs_idx, line_num, fold_num, xi, yi, pi, ri in zip(
+                obs_arr,
+                line_arr,
+                fold_arr,
                 x_dev,
                 y_dev,
                 oof_preds,
@@ -297,12 +568,13 @@ class ReportGenerator:
             ):
                 writer.writerow(
                     {
-                        "original_csv_index": orig_idx,
-                        "fold_number": fold_num,
-                        "X": xi,
-                        "actual_Y": yi,
-                        "oof_predicted_Y": pi,
-                        "residual": ri,
+                        "observation_index": int(obs_idx),
+                        "csv_line_number": int(line_num),
+                        "fold_number": int(fold_num),
+                        "X": float(xi),
+                        "actual_Y": float(yi),
+                        "oof_predicted_Y": float(pi),
+                        "residual": float(ri),
                     }
                 )
 

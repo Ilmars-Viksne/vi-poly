@@ -20,6 +20,168 @@ from polynomial_regression.splitting import DataSplitter, KFoldSplitter
 from polynomial_regression.visualization import RegressionVisualizer
 
 
+import math
+
+
+def _validate_configuration(args: argparse.Namespace) -> None:
+    """Validates pipeline configuration settings and canonicalizes search grids."""
+
+    # 1. Input path & column validation
+    if not hasattr(args, "csv_file") or not str(args.csv_file).strip():
+        raise ValueError("Input CSV file path must be a non-empty string.")
+
+    if not hasattr(args, "x_column") or not str(args.x_column).strip():
+        raise ValueError("Requested X column name cannot be empty or whitespace-only.")
+
+    if not hasattr(args, "y_column") or not str(args.y_column).strip():
+        raise ValueError("Requested Y column name cannot be empty or whitespace-only.")
+
+    # 2. Max degree validation
+    if not hasattr(args, "max_degree") or not isinstance(args.max_degree, (int, np.integer)):
+        raise ValueError("Maximum polynomial degree must be an integer.")
+    max_deg = int(args.max_degree)
+    if max_deg < 0:
+        raise ValueError(f"Maximum polynomial degree must be non-negative; received {max_deg}.")
+
+    # 3. Degrees validation
+    if not hasattr(args, "degrees") or not args.degrees:
+        raise ValueError("At least one polynomial degree must be supplied.")
+
+    validated_degrees: list[int] = []
+    for deg in args.degrees:
+        if not isinstance(deg, (int, np.integer)):
+            raise ValueError(f"Polynomial degrees must be integers; received {deg}.")
+        d_int = int(deg)
+        if d_int < 0:
+            raise ValueError(
+                f"Polynomial degrees must be non-negative integers; received {d_int}."
+            )
+        if d_int > max_deg:
+            raise ValueError(
+                f"Polynomial degree {d_int} exceeds the configured maximum degree {max_deg}."
+            )
+        validated_degrees.append(d_int)
+
+    # 4. L2 values validation
+    if not hasattr(args, "l2_values") or not args.l2_values:
+        raise ValueError("At least one L2 regularization value must be supplied.")
+
+    validated_l2: list[float] = []
+    for l2 in args.l2_values:
+        try:
+            l2_val = float(l2)
+        except (ValueError, TypeError):
+            raise ValueError(f"L2 values must be numeric; received {l2}.")
+        if not np.isfinite(l2_val) or l2_val < 0.0:
+            raise ValueError(
+                f"L2 values must be finite and non-negative; received {l2}."
+            )
+        validated_l2.append(l2_val)
+
+    # 5. Fold count validation
+    if not hasattr(args, "folds") or not isinstance(args.folds, (int, np.integer)):
+        raise ValueError("Number of folds must be an integer.")
+    if int(args.folds) < 2:
+        raise ValueError(
+            f"Number of folds must be at least 2; received {args.folds}."
+        )
+
+    # 6. Split ratios validation
+    train_ratio = float(args.train_ratio)
+    val_ratio = float(args.validation_ratio)
+    test_ratio = float(args.test_ratio)
+    if not (np.isfinite(train_ratio) and np.isfinite(val_ratio) and np.isfinite(test_ratio)):
+        raise ValueError("Split ratios must be finite numbers.")
+    if train_ratio <= 0 or val_ratio <= 0 or test_ratio <= 0:
+        raise ValueError(
+            f"All split ratios must be positive (> 0); received train={train_ratio}, val={val_ratio}, test={test_ratio}."
+        )
+    total_ratio = train_ratio + val_ratio + test_ratio
+    if not math.isclose(total_ratio, 1.0, rel_tol=1e-5, abs_tol=1e-5):
+        raise ValueError(
+            f"Split ratios must sum to 1.0 within tolerance; sum is {total_ratio:.6f}."
+        )
+
+    # 7. Curve points validation
+    if not hasattr(args, "curve_points") or not isinstance(args.curve_points, (int, np.integer)):
+        raise ValueError("Curve point count must be an integer.")
+    if int(args.curve_points) < 2:
+        raise ValueError(
+            f"Curve point count must be at least 2; received {args.curve_points}."
+        )
+
+    # 8. Bootstrap samples validation
+    if not hasattr(args, "bootstrap_samples") or not isinstance(args.bootstrap_samples, (int, np.integer)):
+        raise ValueError("Bootstrap sample count must be an integer.")
+    if int(args.bootstrap_samples) < 0:
+        raise ValueError(
+            f"Bootstrap sample count must be non-negative; received {args.bootstrap_samples}."
+        )
+
+    # 9. Plot DPI validation
+    if not hasattr(args, "plot_dpi") or not isinstance(args.plot_dpi, (int, np.integer)):
+        raise ValueError("Plot DPI must be an integer.")
+    if int(args.plot_dpi) <= 0:
+        raise ValueError(
+            f"Plot DPI must be a positive integer; received {args.plot_dpi}."
+        )
+
+    # 10. Condition warning threshold
+    cond_thresh = float(args.condition_warning_threshold)
+    if not np.isfinite(cond_thresh) or cond_thresh <= 0.0:
+        raise ValueError(
+            f"Condition warning threshold must be finite and strictly positive (> 0); received {cond_thresh}."
+        )
+
+    # 11. Selection tolerances
+    rtol = float(args.selection_rtol)
+    atol = float(args.selection_atol)
+    if not np.isfinite(rtol) or rtol < 0.0:
+        raise ValueError(
+            f"Selection relative tolerance must be finite and non-negative; received {rtol}."
+        )
+    if not np.isfinite(atol) or atol < 0.0:
+        raise ValueError(
+            f"Selection absolute tolerance must be finite and non-negative; received {atol}."
+        )
+
+    # 12. Residual bins
+    if args.residual_bins is not None:
+        if not isinstance(args.residual_bins, (int, np.integer)) or int(args.residual_bins) <= 0:
+            raise ValueError(
+                f"Residual bins count must be a positive integer; received {args.residual_bins}."
+            )
+
+    # 13. Seeds validation
+    if not isinstance(args.seed, (int, np.integer)):
+        raise ValueError("Random seed must be an integer.")
+    if not isinstance(args.bootstrap_seed, (int, np.integer)):
+        raise ValueError("Bootstrap seed must be an integer.")
+
+    # Store raw requested grids before canonicalization
+    if not hasattr(args, "_requested_degrees") or args._requested_degrees is None:
+        args._requested_degrees = list(args.degrees)
+    if not hasattr(args, "_requested_l2_values") or args._requested_l2_values is None:
+        args._requested_l2_values = list(args.l2_values)
+
+    # Deduplicate and sort canonical effective grids using exact float equality
+    args.degrees = sorted(set(validated_degrees))
+    args.l2_values = sorted(set(validated_l2))
+
+
+def validate_args(
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser | None = None,
+) -> argparse.Namespace:
+    try:
+        _validate_configuration(args)
+    except ValueError as exc:
+        if parser is not None:
+            parser.error(str(exc))
+        raise
+    return args
+
+
 def parse_args(args: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Polynomial Regression pipeline using NumPy and Matplotlib."
@@ -168,12 +330,14 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         help="Absolute tolerance for model selection tie-breaking.",
     )
 
-    return parser.parse_args(args)
+    parsed = parser.parse_args(args)
+    parsed._raw_argv = list(args) if args is not None else sys.argv[1:]
+    return validate_args(parsed, parser)
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
-    if args.max_degree < 0:
-        raise ValueError(f"--max-degree must be >= 0, got {args.max_degree}.")
+    # Programmatic configuration validation (raises ValueError on failure)
+    validate_args(args, parser=None)
 
     output_path = pathlib.Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -198,6 +362,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
     )
     split = splitter.split(N)
 
+    if args.folds > len(split.dev_indices):
+        raise ValueError(
+            f"Number of folds {args.folds} exceeds the number of development samples {len(split.dev_indices)}."
+        )
+
     kfold_assignments = {}
     if args.mode in ["kfold", "both"]:
         k_splitter = KFoldSplitter(k=args.folds, seed=args.seed)
@@ -210,6 +379,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # 3. Common Outputs
     common_dir = output_path / "common"
     common_reporter = ReportGenerator(common_dir)
+    common_reporter.write_run_metadata(args, args.csv_file)
     common_reporter.write_split_summary(
         seed=args.seed,
         train_ratio=args.train_ratio,
@@ -220,6 +390,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
         val_indices=split.val_indices,
         test_indices=split.test_indices,
         dev_indices=split.dev_indices,
+        train_observation_indices=loaded_data.observation_indices[split.train_indices],
+        val_observation_indices=loaded_data.observation_indices[split.val_indices],
+        test_observation_indices=loaded_data.observation_indices[split.test_indices],
+        dev_observation_indices=loaded_data.observation_indices[split.dev_indices],
+        train_csv_line_numbers=loaded_data.csv_line_numbers[split.train_indices],
+        val_csv_line_numbers=loaded_data.csv_line_numbers[split.val_indices],
+        test_csv_line_numbers=loaded_data.csv_line_numbers[split.test_indices],
+        dev_csv_line_numbers=loaded_data.csv_line_numbers[split.dev_indices],
         fold_assignments=kfold_assignments,
         skipped_rows=loaded_data.skipped_rows,
     )
@@ -286,7 +464,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             selection_atol=args.selection_atol,
         )
         holdout_reporter.write_test_predictions(
-            loaded_data.original_indices[split.test_indices],
+            loaded_data.observation_indices[split.test_indices],
+            loaded_data.csv_line_numbers[split.test_indices],
             x_all[split.test_indices],
             y_all[split.test_indices],
             holdout_res.test_predictions,
@@ -490,7 +669,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             selection_atol=args.selection_atol,
         )
         kfold_reporter.write_test_predictions(
-            loaded_data.original_indices[split.test_indices],
+            loaded_data.observation_indices[split.test_indices],
+            loaded_data.csv_line_numbers[split.test_indices],
             x_all[split.test_indices],
             y_all[split.test_indices],
             kfold_res.test_predictions,
@@ -504,7 +684,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
             dev_fold_nums[fold.val_indices] = fold.fold_index + 1
 
         kfold_reporter.write_oof_predictions(
-            loaded_data.original_indices[split.dev_indices],
+            loaded_data.observation_indices[split.dev_indices],
+            loaded_data.csv_line_numbers[split.dev_indices],
             dev_fold_nums,
             x_all[split.dev_indices],
             y_all[split.dev_indices],

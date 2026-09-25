@@ -8,16 +8,30 @@ from dataclasses import dataclass, field
 import numpy as np
 
 
+@dataclass(frozen=True)
+class SkippedRow:
+    """Provenance details for a skipped invalid row in CSV."""
+
+    observation_index: int
+    csv_line_number: int
+    columns: str
+    reason: str
+
+
 @dataclass
 class LoadedData:
     """Class representing loaded and parsed numerical data from CSV."""
 
     x: np.ndarray
     y: np.ndarray
-    original_indices: np.ndarray
-    skipped_rows: list[tuple[int, str, str]] = field(
-        default_factory=list
-    )  # (row_num, col, reason)
+    observation_indices: np.ndarray
+    csv_line_numbers: np.ndarray
+    skipped_rows: list[SkippedRow] = field(default_factory=list)
+
+    @property
+    def original_indices(self) -> np.ndarray:
+        """Compatibility alias for zero-based observation indices."""
+        return self.observation_indices
 
 
 class CSVDataLoader:
@@ -39,8 +53,8 @@ class CSVDataLoader:
         """Reads CSV and parses X and Y columns into NumPy arrays.
 
         Returns:
-            LoadedData container with numpy arrays x, y, original row indices,
-            and skipped row details.
+            LoadedData container with numpy arrays x, y, observation_indices,
+            csv_line_numbers, and skipped row details.
 
         Raises:
             FileNotFoundError: If the specified file does not exist.
@@ -51,8 +65,9 @@ class CSVDataLoader:
 
         valid_x: list[float] = []
         valid_y: list[float] = []
-        original_indices: list[int] = []
-        skipped_rows: list[tuple[int, str, str]] = []
+        observation_indices: list[int] = []
+        csv_line_numbers: list[int] = []
+        skipped_rows: list[SkippedRow] = []
         invalid_row_errors: list[str] = []
 
         x_col_norm = self.x_column.strip() if self.x_column else ""
@@ -118,8 +133,8 @@ class CSVDataLoader:
 
             reader.fieldnames = normalized_fieldnames
 
-            # DictReader uses 1-based line numbers; line 1 is header, so data starts at row 2
-            for row_idx, row in enumerate(reader, start=2):
+            for obs_idx, row in enumerate(reader):
+                line_num = reader.line_num
                 x_str = row.get(x_col_norm)
                 y_str = row.get(y_col_norm)
 
@@ -138,17 +153,23 @@ class CSVDataLoader:
 
                     reason_str = "; ".join(reasons)
                     cols_str = ", ".join(col_affected)
-                    skipped_rows.append((row_idx, cols_str, reason_str))
-                    invalid_row_errors.append(f"Row {row_idx}: {reason_str}")
+                    skipped_rows.append(
+                        SkippedRow(
+                            observation_index=obs_idx,
+                            csv_line_number=line_num,
+                            columns=cols_str,
+                            reason=reason_str,
+                        )
+                    )
+                    invalid_row_errors.append(
+                        f"Observation {obs_idx} (Line {line_num}): {reason_str}"
+                    )
                     continue
 
                 valid_x.append(val_x)
                 valid_y.append(val_y)
-                # Save 0-based data row index or 1-based CSV row number.
-                # Preserving 0-based index of observation relative to full dataset or CSV row number.
-                # Let's preserve 0-based observation index in CSV (row_idx - 2) or CSV row number.
-                # The specification says "original CSV row indices". Keeping 0-based row index (row_idx - 2).
-                original_indices.append(row_idx - 2)
+                observation_indices.append(obs_idx)
+                csv_line_numbers.append(line_num)
 
         if invalid_row_errors and not self.skip_invalid_rows:
             error_details = "\n  ".join(invalid_row_errors)
@@ -159,10 +180,32 @@ class CSVDataLoader:
         if len(valid_x) == 0:
             raise ValueError(f"No valid data rows found in CSV file '{self.filepath}'.")
 
+        x_arr = np.array(valid_x, dtype=np.float64)
+        y_arr = np.array(valid_y, dtype=np.float64)
+        obs_arr = np.array(observation_indices, dtype=np.int64)
+        line_arr = np.array(csv_line_numbers, dtype=np.int64)
+
+        # Validate invariants
+        if not (len(x_arr) == len(y_arr) == len(obs_arr) == len(line_arr)):
+            raise ValueError("Loaded data array lengths must be equal.")
+        if obs_arr.ndim != 1 or line_arr.ndim != 1:
+            raise ValueError("Provenance arrays must be 1D.")
+        if not np.issubdtype(obs_arr.dtype, np.integer) or not np.issubdtype(
+            line_arr.dtype, np.integer
+        ):
+            raise ValueError("Provenance arrays must have integer dtype.")
+        if len(set(obs_arr)) != len(obs_arr):
+            raise ValueError("Observation indices must be unique.")
+        if np.any(obs_arr < 0):
+            raise ValueError("Observation indices must be non-negative.")
+        if np.any(line_arr < 1):
+            raise ValueError("CSV line numbers must be positive.")
+
         return LoadedData(
-            x=np.array(valid_x, dtype=np.float64),
-            y=np.array(valid_y, dtype=np.float64),
-            original_indices=np.array(original_indices, dtype=np.int64),
+            x=x_arr,
+            y=y_arr,
+            observation_indices=obs_arr,
+            csv_line_numbers=line_arr,
             skipped_rows=skipped_rows,
         )
 
