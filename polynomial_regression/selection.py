@@ -110,7 +110,7 @@ def _validate_hyperparameters(
             )
         validated_l2.append(l2_val)
 
-    return sorted(set(validated_degrees)), list(dict.fromkeys(validated_l2))
+    return sorted(set(validated_degrees)), sorted(set(validated_l2))
 
 
 def _validate_index_array(idx: np.ndarray, name: str, n_all: int) -> np.ndarray:
