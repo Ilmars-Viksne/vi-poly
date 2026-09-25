@@ -6,12 +6,11 @@ import tempfile
 import unittest
 
 import numpy as np
+import pytest
 
 from generate_data import generate_synthetic_data, save_to_csv
 from main import parse_args, run_pipeline
 from polynomial_regression.regression import PolynomialRegressor
-from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
-from polynomial_regression.splitting import DataSplitter
 
 
 class TestEndToEndCLI(unittest.TestCase):
@@ -151,7 +150,9 @@ class TestEndToEndCLI(unittest.TestCase):
             with open(manifest_file, "r") as f:
                 entries = json.load(f)
             paths = [e["plot_filename"] for e in entries]
-            self.assertEqual(len(paths), len(set(paths)), "Duplicate plot filename in manifest")
+            self.assertEqual(
+                len(paths), len(set(paths)), "Duplicate plot filename in manifest"
+            )
             for p in paths:
                 self.assertTrue((out_dir / subdir / p).exists())
 
@@ -193,6 +194,7 @@ class TestEndToEndCLI(unittest.TestCase):
         self.assertIsInstance(data["condition_number"], float)
         self.assertIsInstance(data["condition_warning"], bool)
 
+    @pytest.mark.filterwarnings("ignore:Design matrix condition number.*:UserWarning")
     def test_solver_fallback_and_metadata(self):
         # Construct rank-deficient design matrix with identical columns to force singular matrix in solver
         X_singular = np.ones((10, 3), dtype=np.float64)

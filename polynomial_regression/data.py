@@ -57,11 +57,15 @@ class CSVDataLoader:
 
         x_col_norm = self.x_column.strip() if self.x_column else ""
         if not x_col_norm:
-            raise ValueError("Requested X column name cannot be empty or whitespace-only.")
+            raise ValueError(
+                "Requested X column name cannot be empty or whitespace-only."
+            )
 
         y_col_norm = self.y_column.strip() if self.y_column else ""
         if not y_col_norm:
-            raise ValueError("Requested Y column name cannot be empty or whitespace-only.")
+            raise ValueError(
+                "Requested Y column name cannot be empty or whitespace-only."
+            )
 
         with open(self.filepath, mode="r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)

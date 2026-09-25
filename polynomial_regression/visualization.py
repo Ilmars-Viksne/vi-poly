@@ -1116,7 +1116,9 @@ class RegressionVisualizer:
 
         for i, l2 in enumerate(l2_values):
             for j, deg in enumerate(degrees):
-                cand = next(c for c in candidates if c.degree == deg and c.l2_lambda == l2)
+                cand = next(
+                    c for c in candidates if c.degree == deg and c.l2_lambda == l2
+                )
                 heatmap_data[i, j] = rmse_extractor(cand)
 
         im = ax.imshow(heatmap_data, cmap="viridis_r", aspect="auto")
