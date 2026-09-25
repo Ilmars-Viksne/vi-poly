@@ -214,6 +214,10 @@ class ReportGenerator:
             "solver_used": fit_details.solver_used,
             "condition_number": fit_details.condition_number,
             "condition_warning": fit_details.condition_warning,
+            "rank": fit_details.rank,
+            "full_rank": fit_details.full_rank,
+            "design_condition_number": fit_details.design_condition_number,
+            "solver_condition_number": fit_details.solver_condition_number,
             "selection_tolerances": {
                 "rtol": selection_rtol,
                 "atol": selection_atol,

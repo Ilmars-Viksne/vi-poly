@@ -37,46 +37,72 @@ class RegressionMetrics:
         Returns:
             EvaluationMetrics dataclass instance.
         """
-        y_true = np.asarray(y_true, dtype=np.float64)
-        y_pred = np.asarray(y_pred, dtype=np.float64)
+        try:
+            y_true_arr = np.asarray(y_true, dtype=np.float64)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("y_true must be numeric.") from exc
 
-        if len(y_true) != len(y_pred):
+        try:
+            y_pred_arr = np.asarray(y_pred, dtype=np.float64)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("y_pred must be numeric.") from exc
+
+        if y_true_arr.ndim != 1:
+            raise ValueError(f"y_true must be a 1D array; received shape {y_true_arr.shape}.")
+
+        if y_pred_arr.ndim != 1:
+            raise ValueError(f"y_pred must be a 1D array; received shape {y_pred_arr.shape}.")
+
+        if len(y_true_arr) != len(y_pred_arr):
             raise ValueError(
-                f"Shape mismatch: y_true len ({len(y_true)}) != y_pred len ({len(y_pred)})"
+                f"Shape mismatch: y_true len ({len(y_true_arr)}) != y_pred len ({len(y_pred_arr)})"
             )
 
-        N = len(y_true)
+        N = len(y_true_arr)
         if N == 0:
-            raise ValueError("Cannot calculate metrics on empty arrays.")
+            raise ValueError("Cannot calculate regression metrics for empty arrays.")
 
-        residuals = y_true - y_pred
+        if not np.all(np.isfinite(y_true_arr)):
+            non_finite_count = int(np.sum(~np.isfinite(y_true_arr)))
+            raise ValueError(f"y_true contains {non_finite_count} non-finite value(s).")
+
+        if not np.all(np.isfinite(y_pred_arr)):
+            non_finite_count = int(np.sum(~np.isfinite(y_pred_arr)))
+            raise ValueError(f"y_pred contains {non_finite_count} non-finite value(s).")
+
+        if num_predictors is not None:
+            if not isinstance(num_predictors, (int, np.integer)) or num_predictors < 0:
+                raise ValueError(f"num_predictors must be a non-negative integer; got {num_predictors}.")
+
+        residuals = y_true_arr - y_pred_arr
 
         mse = float(np.mean(residuals**2))
         rmse = float(np.sqrt(mse))
         mae = float(np.mean(np.abs(residuals)))
 
-        # R-squared calculation
-        # R2 = 1 - (SS_res / SS_tot)
         ss_res = float(np.sum(residuals**2))
-        y_mean = float(np.mean(y_true))
-        ss_tot = float(np.sum((y_true - y_mean) ** 2))
+        y_mean = float(np.mean(y_true_arr))
+        ss_tot = float(np.sum((y_true_arr - y_mean) ** 2))
 
         if ss_tot < 1e-15:
-            # Constant target edge case
             if ss_res < 1e-15:
-                r_squared = 1.0  # Perfect prediction of constant target
+                r_squared = 1.0
             else:
-                r_squared = 0.0  # Residual non-zero for constant target
+                r_squared = 0.0
         else:
             r_squared = float(1.0 - (ss_res / ss_tot))
 
-        # Adjusted R-squared calculation
-        # R2_adj = 1 - (1 - R2) * (N - 1) / (N - p - 1)
         adj_r_squared: float | None = None
         if num_predictors is not None:
-            p = num_predictors
+            p = int(num_predictors)
             if N > p + 1:
                 adj_r_squared = float(1.0 - (1.0 - r_squared) * (N - 1) / (N - p - 1))
+
+        if not np.all(np.isfinite([mse, rmse, mae, r_squared])):
+            raise FloatingPointError("Calculated metrics contain non-finite values.")
+
+        if adj_r_squared is not None and not np.isfinite(adj_r_squared):
+            raise FloatingPointError("Calculated adjusted R-squared is non-finite.")
 
         return EvaluationMetrics(
             mse=mse,
