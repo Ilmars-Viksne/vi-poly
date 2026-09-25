@@ -171,6 +171,36 @@ Subset indices in `split_summary.json` record all three index systems (`loaded_a
 
 ---
 
+## Scientific Visualizations & Presentation Enhancements
+
+### Matplotlib Backend Selection
+- **Centralized Configuration**: Matplotlib backend selection is handled centrally in `main.py` prior to importing `RegressionVisualizer` or `matplotlib.pyplot`.
+- **Headless Execution**: Non-interactive execution uses the `Agg` backend (`matplotlib.use("Agg", force=True)`), ensuring figure rendering is completely safe in headless CI and server environments.
+- **Interactive Display**: Specifying `--show-plots` preserves interactive GUI rendering capabilities without mutating backends per visualizer instance.
+
+### Adaptive $R^2$ Axis Limits & Negative $R^2$ Visualization
+- **Dynamic Bounds**: Vertical axis limits for $R^2$ plots (such as Plot 17) adapt dynamically via `_r_squared_axis_limits` to accommodate finite negative $R^2$ values without clipping.
+- **Zero Reference Line**: A horizontal reference line is plotted at $R^2 = 0$.
+- **Dynamic Text Annotation**: Value labels are positioned above positive bars with `va="bottom"` and below negative bars with `va="top"`.
+
+### Workflow-Specific Plot Filenames, Titles & Manifests
+- **Common Plots**: Plots 01 through 03 remain workflow-neutral (`01_original_data.png`, `02_data_splits.png`, `03_split_sizes.png`) and report `"workflow": "common"` in manifests.
+- **Workflow Tokens in Filenames**: All workflow-specific plots (04–20) incorporate normalized lowercase workflow tokens into their filenames (e.g., `13_holdout_final_polynomial_fit.png`, `13_kfold_final_polynomial_fit.png`).
+- **Clear Display Titles**: Plot titles explicitly display the human-readable workflow name `Holdout` or `K-Fold` (e.g., `13 Holdout: Final Polynomial Fit`, `13 K-Fold: Final Polynomial Fit`).
+
+### Bootstrap Fitted-Curve Uncertainty Band
+- **Interpretation**: The bootstrap band (`13b_<workflow>_fitted_curve_uncertainty_band.png`) represents variation in the fitted polynomial curve across case-resampled development datasets.
+- **Statistical Distinction**: The band does not include new observation noise and must not be interpreted as a prediction interval for future individual observations.
+- **Manifest Metadata**: Plot manifest entries record percentile bounds (`lower_percentile`: 2.5, `upper_percentile`: 97.5) and `interval_interpretation`: `"fitted_curve_uncertainty"`.
+
+### K-Fold Binary Membership Matrix (Plot 08)
+- **Matrix Representation**: Plot 08 (`08_kfold_assignments.png`) displays a binary training-validation membership matrix of shape $(K, N_{\text{dev}})$ using `imshow()`.
+- **Color Category Mapping**: Light blue (`#BBD7E8`) represents Training membership (0), and orange (`#E69F00`) represents Validation membership (1).
+- **Validation Invariants**: Each development sample is assigned to validation in exactly 1 fold and to training in the remaining $K - 1$ folds.
+- **Axis Semantics**: The X-axis represents zero-based development set sample positions ($0$ to $N_{\text{dev}}-1$), and the Y-axis represents cross-validation folds (`Fold 1` at top to `Fold K`).
+
+---
+
 ## Installation & Environment Setup
 
 ### Requirements
