@@ -18,7 +18,9 @@ class TestRegression(unittest.TestCase):
         true_beta = np.array([3.0, 2.0, -0.5])
         y = true_beta[0] + true_beta[1] * x + true_beta[2] * (x**2)
 
-        X = PolynomialFeatureTransformer(degree=2, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=2, scale_features=False).fit_transform(
+            x
+        )
         regressor = PolynomialRegressor(l2_lambda=0.0).fit(X, y)
 
         np.testing.assert_allclose(regressor.beta, true_beta, atol=1e-10)
@@ -31,12 +33,17 @@ class TestRegression(unittest.TestCase):
         X = PolynomialFeatureTransformer(degree=2).fit_transform(x)
         y = 1.0 + x - x**2
 
-        with patch("numpy.linalg.solve", side_effect=AssertionError("np.linalg.solve should not be called")):
+        with patch(
+            "numpy.linalg.solve",
+            side_effect=AssertionError("np.linalg.solve should not be called"),
+        ):
             regressor = PolynomialRegressor(l2_lambda=0.0).fit(X, y)
 
         self.assertEqual(regressor.fit_details.solver_used, "lstsq_ols")
 
-    @pytest.mark.filterwarnings("ignore:Design matrix solver system is rank deficient.*:UserWarning")
+    @pytest.mark.filterwarnings(
+        "ignore:Design matrix solver system is rank deficient.*:UserWarning"
+    )
     @pytest.mark.filterwarnings("ignore:Solver matrix condition number.*:UserWarning")
     def test_rank_deficient_ols(self):
         # Create rank-deficient matrix with identical columns
@@ -70,15 +77,24 @@ class TestRegression(unittest.TestCase):
         y_aug = np.concatenate([y, np.zeros(num_features, dtype=np.float64)])
         expected_beta, _, _, _ = np.linalg.lstsq(X_aug, y_aug, rcond=None)
 
-        np.testing.assert_allclose(regressor.beta, expected_beta, rtol=1e-12, atol=1e-12)
-        self.assertEqual(regressor.fit_details.solver_condition_number, float(np.linalg.cond(X_aug)))
-        self.assertEqual(regressor.fit_details.condition_number, regressor.fit_details.solver_condition_number)
+        np.testing.assert_allclose(
+            regressor.beta, expected_beta, rtol=1e-12, atol=1e-12
+        )
+        self.assertEqual(
+            regressor.fit_details.solver_condition_number, float(np.linalg.cond(X_aug))
+        )
+        self.assertEqual(
+            regressor.fit_details.condition_number,
+            regressor.fit_details.solver_condition_number,
+        )
 
     def test_ridge_intercept_not_regularized(self):
         x = np.linspace(-1, 1, 20)
         y = 50.0 + 2.0 * x
 
-        X = PolynomialFeatureTransformer(degree=1, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=1, scale_features=False).fit_transform(
+            x
+        )
         regressor = PolynomialRegressor(l2_lambda=1e6).fit(X, y)
 
         np.testing.assert_allclose(regressor.beta[0], 50.0, atol=1e-2)
@@ -131,7 +147,9 @@ class TestRegression(unittest.TestCase):
         with self.assertRaises(ValueError):
             PolynomialRegressor(condition_warning_threshold=np.nan)
 
-    @pytest.mark.filterwarnings("ignore:Design matrix solver system is rank deficient.*:UserWarning")
+    @pytest.mark.filterwarnings(
+        "ignore:Design matrix solver system is rank deficient.*:UserWarning"
+    )
     @pytest.mark.filterwarnings("ignore:Solver matrix condition number.*:UserWarning")
     def test_predict_input_validation(self):
         regressor = PolynomialRegressor().fit(np.ones((10, 2)), np.ones(10))
@@ -203,7 +221,9 @@ class TestMetrics(unittest.TestCase):
 
         # Negative num_predictors
         with self.assertRaises(ValueError):
-            RegressionMetrics.calculate(np.array([1.0, 2.0]), np.array([1.0, 2.0]), num_predictors=-1)
+            RegressionMetrics.calculate(
+                np.array([1.0, 2.0]), np.array([1.0, 2.0]), num_predictors=-1
+            )
 
 
 if __name__ == "__main__":

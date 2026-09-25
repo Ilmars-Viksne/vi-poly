@@ -1,18 +1,13 @@
 """Numerical stability and input validation unit tests."""
 
-import math
 import unittest
 
 import numpy as np
 
 from polynomial_regression.features import (
-    DEFAULT_MAX_DEGREE,
     PolynomialFeatureTransformer,
 )
-from polynomial_regression.metrics import RegressionMetrics
-from polynomial_regression.regression import PolynomialRegressor
 from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
-from polynomial_regression.splitting import DataSplitter, KFoldSplitter
 
 
 class TestFeatureTransformerNumericalStability(unittest.TestCase):
@@ -119,7 +114,14 @@ class TestSelectorInputValidation(unittest.TestCase):
 
         # train and val overlap
         with self.assertRaises(ValueError):
-            selector.select(x, y, np.array([0, 1, 2]), np.array([2, 3, 4]), np.array([5, 6]), np.array([0, 1, 2, 3, 4]))
+            selector.select(
+                x,
+                y,
+                np.array([0, 1, 2]),
+                np.array([2, 3, 4]),
+                np.array([5, 6]),
+                np.array([0, 1, 2, 3, 4]),
+            )
 
 
 if __name__ == "__main__":

@@ -48,10 +48,14 @@ class RegressionMetrics:
             raise ValueError("y_pred must be numeric.") from exc
 
         if y_true_arr.ndim != 1:
-            raise ValueError(f"y_true must be a 1D array; received shape {y_true_arr.shape}.")
+            raise ValueError(
+                f"y_true must be a 1D array; received shape {y_true_arr.shape}."
+            )
 
         if y_pred_arr.ndim != 1:
-            raise ValueError(f"y_pred must be a 1D array; received shape {y_pred_arr.shape}.")
+            raise ValueError(
+                f"y_pred must be a 1D array; received shape {y_pred_arr.shape}."
+            )
 
         if len(y_true_arr) != len(y_pred_arr):
             raise ValueError(
@@ -70,9 +74,12 @@ class RegressionMetrics:
             non_finite_count = int(np.sum(~np.isfinite(y_pred_arr)))
             raise ValueError(f"y_pred contains {non_finite_count} non-finite value(s).")
 
-        if num_predictors is not None:
-            if not isinstance(num_predictors, (int, np.integer)) or num_predictors < 0:
-                raise ValueError(f"num_predictors must be a non-negative integer; got {num_predictors}.")
+        if num_predictors is not None and (
+            not isinstance(num_predictors, (int, np.integer)) or num_predictors < 0
+        ):
+            raise ValueError(
+                f"num_predictors must be a non-negative integer; got {num_predictors}."
+            )
 
         residuals = y_true_arr - y_pred_arr
 

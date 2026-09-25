@@ -200,7 +200,9 @@ class TestEndToEndCLI(unittest.TestCase):
         self.assertIsInstance(data["rank"], int)
         self.assertIsInstance(data["full_rank"], bool)
 
-    @pytest.mark.filterwarnings("ignore:Design matrix solver system is rank deficient.*:UserWarning")
+    @pytest.mark.filterwarnings(
+        "ignore:Design matrix solver system is rank deficient.*:UserWarning"
+    )
     @pytest.mark.filterwarnings("ignore:Solver matrix condition number.*:UserWarning")
     def test_solver_fallback_and_metadata(self):
         X_singular = np.ones((10, 3), dtype=np.float64)

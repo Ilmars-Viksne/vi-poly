@@ -43,7 +43,11 @@ class DataSplitter:
         self._validate_ratios()
 
     def _validate_ratios(self) -> None:
-        if not (np.isfinite(self.train_ratio) and np.isfinite(self.val_ratio) and np.isfinite(self.test_ratio)):
+        if not (
+            np.isfinite(self.train_ratio)
+            and np.isfinite(self.val_ratio)
+            and np.isfinite(self.test_ratio)
+        ):
             raise ValueError("Split ratios must be finite numbers.")
 
         if self.train_ratio <= 0 or self.val_ratio <= 0 or self.test_ratio <= 0:
@@ -122,7 +126,9 @@ class KFoldSplitter:
             List of FoldSplit objects, one per fold.
         """
         if not isinstance(self.k, (int, np.integer)) or self.k < 2:
-            raise ValueError(f"Number of folds K must be an integer >= 2, got {self.k}.")
+            raise ValueError(
+                f"Number of folds K must be an integer >= 2, got {self.k}."
+            )
 
         try:
             dev_arr = np.asarray(dev_indices, dtype=np.int64)
@@ -130,7 +136,9 @@ class KFoldSplitter:
             raise ValueError("dev_indices must be integer array.") from exc
 
         if dev_arr.ndim != 1:
-            raise ValueError(f"dev_indices must be a 1D array; received shape {dev_arr.shape}.")
+            raise ValueError(
+                f"dev_indices must be a 1D array; received shape {dev_arr.shape}."
+            )
 
         if dev_arr.size == 0:
             raise ValueError("dev_indices must not be empty.")

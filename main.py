@@ -8,7 +8,10 @@ from typing import Any
 import numpy as np
 
 from polynomial_regression.data import CSVDataLoader
-from polynomial_regression.features import DEFAULT_MAX_DEGREE, PolynomialFeatureTransformer
+from polynomial_regression.features import (
+    DEFAULT_MAX_DEGREE,
+    PolynomialFeatureTransformer,
+)
 from polynomial_regression.metrics import RegressionMetrics
 from polynomial_regression.regression import PolynomialRegressor
 from polynomial_regression.reporting import ReportGenerator
@@ -324,7 +327,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
             cand_curves = []
             for cd in select_degs:
                 c_trans = PolynomialFeatureTransformer(
-                    degree=cd, scale_features=args.scale_features, max_degree=args.max_degree
+                    degree=cd,
+                    scale_features=args.scale_features,
+                    max_degree=args.max_degree,
                 )
                 X_tr = c_trans.fit_transform(x_all[split.train_indices])
                 c_reg = PolynomialRegressor(l2_lambda=best_l2).fit(

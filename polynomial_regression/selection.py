@@ -90,10 +90,12 @@ def _validate_hyperparameters(
     validated_degrees = []
     for deg in degrees:
         if not isinstance(deg, (int, np.integer)):
-            raise ValueError(f"Degree values must be integers, got {type(deg)}.")
+            raise TypeError(f"Degree values must be integers, got {type(deg)}.")
         d_int = int(deg)
         if d_int < 0 or d_int > max_degree:
-            raise ValueError(f"Polynomial degree {d_int} is outside allowed range [0, {max_degree}].")
+            raise ValueError(
+                f"Polynomial degree {d_int} is outside allowed range [0, {max_degree}]."
+            )
         validated_degrees.append(d_int)
 
     validated_l2 = []
@@ -103,10 +105,12 @@ def _validate_hyperparameters(
         except (ValueError, TypeError) as exc:
             raise ValueError(f"L2 lambda must be numeric, got {l2}.") from exc
         if not np.isfinite(l2_val) or l2_val < 0.0:
-            raise ValueError(f"L2 lambda must be finite and non-negative, got {l2_val}.")
+            raise ValueError(
+                f"L2 lambda must be finite and non-negative, got {l2_val}."
+            )
         validated_l2.append(l2_val)
 
-    return sorted(list(set(validated_degrees))), list(dict.fromkeys(validated_l2))
+    return sorted(set(validated_degrees)), list(dict.fromkeys(validated_l2))
 
 
 def _validate_index_array(idx: np.ndarray, name: str, n_all: int) -> np.ndarray:
@@ -120,7 +124,9 @@ def _validate_index_array(idx: np.ndarray, name: str, n_all: int) -> np.ndarray:
     if arr.size == 0:
         raise ValueError(f"Index array '{name}' must not be empty.")
     if np.any(arr < 0) or np.any(arr >= n_all):
-        raise ValueError(f"Index array '{name}' contains out-of-bounds indices for sample size {n_all}.")
+        raise ValueError(
+            f"Index array '{name}' contains out-of-bounds indices for sample size {n_all}."
+        )
     if len(set(arr)) != len(arr):
         raise ValueError(f"Index array '{name}' contains duplicate indices.")
     return arr
@@ -140,7 +146,9 @@ class HoldoutModelSelector:
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
         self.max_degree = int(max_degree)
-        self.degrees, self.l2_lambdas = _validate_hyperparameters(degrees, l2_lambdas, self.max_degree)
+        self.degrees, self.l2_lambdas = _validate_hyperparameters(
+            degrees, l2_lambdas, self.max_degree
+        )
         self.scale_features = scale_features
         self.selection_rtol = float(selection_rtol)
         self.selection_atol = float(selection_atol)
@@ -272,9 +280,7 @@ class HoldoutModelSelector:
             if np.isclose(
                 cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol
             ):
-                if candidate.degree < best.degree:
-                    best = candidate
-                elif (
+                if candidate.degree < best.degree or (
                     candidate.degree == best.degree
                     and candidate.l2_lambda > best.l2_lambda
                 ):
@@ -301,7 +307,9 @@ class KFoldModelSelector:
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
         self.max_degree = int(max_degree)
-        self.degrees, self.l2_lambdas = _validate_hyperparameters(degrees, l2_lambdas, self.max_degree)
+        self.degrees, self.l2_lambdas = _validate_hyperparameters(
+            degrees, l2_lambdas, self.max_degree
+        )
         self.k_folds = int(k_folds)
         self.seed = int(seed)
         self.scale_features = scale_features

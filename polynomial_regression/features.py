@@ -26,8 +26,14 @@ class PolynomialFeatureTransformer:
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
         if not isinstance(max_degree, (int, np.integer)) or max_degree < 0:
-            raise ValueError(f"max_degree must be a non-negative integer, got {max_degree}.")
-        if not isinstance(degree, (int, np.integer)) or degree < 0 or degree > max_degree:
+            raise ValueError(
+                f"max_degree must be a non-negative integer, got {max_degree}."
+            )
+        if (
+            not isinstance(degree, (int, np.integer))
+            or degree < 0
+            or degree > max_degree
+        ):
             raise ValueError(
                 f"Polynomial degree must be an integer between 0 and configured maximum {max_degree}, got {degree}."
             )
@@ -45,14 +51,20 @@ class PolynomialFeatureTransformer:
             raise ValueError(f"Input '{param_name}' must be numeric.") from exc
 
         if x_arr.ndim != 1:
-            raise ValueError(f"Input '{param_name}' must be a 1D array; received shape {x_arr.shape}.")
+            raise ValueError(
+                f"Input '{param_name}' must be a 1D array; received shape {x_arr.shape}."
+            )
 
         if x_arr.size == 0:
-            raise ValueError(f"Input '{param_name}' must contain at least one observation.")
+            raise ValueError(
+                f"Input '{param_name}' must contain at least one observation."
+            )
 
         if not np.all(np.isfinite(x_arr)):
             non_finite_count = int(np.sum(~np.isfinite(x_arr)))
-            raise ValueError(f"Input '{param_name}' contains {non_finite_count} non-finite value(s).")
+            raise ValueError(
+                f"Input '{param_name}' contains {non_finite_count} non-finite value(s)."
+            )
 
         return x_arr
 
@@ -157,8 +169,13 @@ class PolynomialFeatureTransformer:
                 raise RuntimeError(
                     "Feature scaling is enabled but transformer is not fitted. Call fit() first."
                 )
-            if len(self.scaling_params.means) != self.degree or len(self.scaling_params.stds) != self.degree:
-                raise ValueError("Scaling parameters dimension mismatch for current degree.")
+            if (
+                len(self.scaling_params.means) != self.degree
+                or len(self.scaling_params.stds) != self.degree
+            ):
+                raise ValueError(
+                    "Scaling parameters dimension mismatch for current degree."
+                )
 
             for p in range(1, self.degree + 1):
                 m = self.scaling_params.means[p - 1]
@@ -169,7 +186,9 @@ class PolynomialFeatureTransformer:
                     X_design[:, p] = (X_design[:, p] - m) / s
 
             if not np.all(np.isfinite(X_design)):
-                raise FloatingPointError("Scaled polynomial feature generation produced non-finite values.")
+                raise FloatingPointError(
+                    "Scaled polynomial feature generation produced non-finite values."
+                )
 
         return X_design
 
@@ -194,7 +213,9 @@ class PolynomialFeatureTransformer:
             raise ValueError("beta_scaled must be numeric.") from exc
 
         if beta_arr.ndim != 1:
-            raise ValueError(f"beta_scaled must be a 1D array; received shape {beta_arr.shape}.")
+            raise ValueError(
+                f"beta_scaled must be a 1D array; received shape {beta_arr.shape}."
+            )
 
         if len(beta_arr) != self.degree + 1:
             raise ValueError(
@@ -203,7 +224,9 @@ class PolynomialFeatureTransformer:
 
         if not np.all(np.isfinite(beta_arr)):
             non_finite_count = int(np.sum(~np.isfinite(beta_arr)))
-            raise ValueError(f"beta_scaled contains {non_finite_count} non-finite value(s).")
+            raise ValueError(
+                f"beta_scaled contains {non_finite_count} non-finite value(s)."
+            )
 
         if not self.scale_features or self.degree == 0 or self.scaling_params is None:
             return beta_arr.copy()
@@ -218,7 +241,9 @@ class PolynomialFeatureTransformer:
                     s = self.scaling_params.stds[p - 1]
 
                     if not np.isfinite(m) or not np.isfinite(s) or s <= 0.0:
-                        raise ValueError(f"Invalid scaling parameters for degree {p}: mean={m}, std={s}.")
+                        raise ValueError(
+                            f"Invalid scaling parameters for degree {p}: mean={m}, std={s}."
+                        )
 
                     if s < 1e-15:
                         beta_orig[p] = 0.0
