@@ -6,7 +6,7 @@ import numpy as np
 
 from .features import PolynomialFeatureTransformer
 from .metrics import EvaluationMetrics, RegressionMetrics
-from .regression import PolynomialRegressor
+from .regression import ModelFitDetails, PolynomialRegressor
 from .splitting import KFoldSplitter
 
 
@@ -33,6 +33,7 @@ class HoldoutSelectionResult:
     final_refitted_beta_scaled: np.ndarray
     final_refitted_beta_orig: np.ndarray
     final_refitted_transformer: PolynomialFeatureTransformer
+    final_fit_details: ModelFitDetails
     final_test_metrics: EvaluationMetrics
     test_predictions: np.ndarray
     test_residuals: np.ndarray
@@ -70,6 +71,7 @@ class KFoldSelectionResult:
     final_refitted_beta_scaled: np.ndarray
     final_refitted_beta_orig: np.ndarray
     final_refitted_transformer: PolynomialFeatureTransformer
+    final_fit_details: ModelFitDetails
     final_test_metrics: EvaluationMetrics
     test_predictions: np.ndarray
     test_residuals: np.ndarray
@@ -195,6 +197,7 @@ class HoldoutModelSelector:
             final_refitted_beta_scaled=final_beta_scaled,
             final_refitted_beta_orig=final_beta_orig,
             final_refitted_transformer=refitted_transformer,
+            final_fit_details=refitted_regressor.fit_details,
             final_test_metrics=test_metrics,
             test_predictions=test_pred,
             test_residuals=test_residuals,
@@ -387,6 +390,7 @@ class KFoldModelSelector:
             final_refitted_beta_scaled=final_beta_scaled,
             final_refitted_beta_orig=final_beta_orig,
             final_refitted_transformer=refitted_transformer,
+            final_fit_details=refitted_regressor.fit_details,
             final_test_metrics=test_metrics,
             test_predictions=test_pred,
             test_residuals=test_residuals,

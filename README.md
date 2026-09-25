@@ -145,38 +145,70 @@ python main.py polynomial_data.csv --mode both --output-dir results
 
 ## Summary of Generated Output Files
 
-Numerical results and visual artifacts are written to `--output-dir`:
+Numerical results and visual artifacts are written to `--output-dir` in workflow-isolated subdirectories:
 
-### Numerical Results
-1. `split_summary.json`: Split proportions, sample counts, row indices, fold memberships, and skipped row details.
-2. `holdout_results.csv`: Per-candidate train and validation MSE, RMSE, MAE, R², and condition numbers.
-3. `kfold_fold_results.csv`: Per-fold train and validation metrics across folds.
-4. `kfold_summary_results.csv`: Mean and standard deviation of validation metrics across folds.
-5. `final_model.json`: Selected degree, L2 strength, scaled & original-basis coefficients, scaling statistics, condition number, and final test metrics.
-6. `test_predictions.csv`: Original CSV row index, X, actual Y, predicted Y, and residual on untouched test set.
-7. `out_of_fold_predictions.csv`: Cross-validated out-of-fold predictions for development data.
-8. `plot_manifest.json`: Structured manifest recording every generated figure.
+### Output Layout (`--mode both`)
+
+```text
+<output-dir>/
+├── common/
+│   ├── split_summary.json
+│   ├── 01_original_data.<format>
+│   ├── 02_data_splits.<format>
+│   ├── 03_split_sizes.<format>
+│   └── plot_manifest.json
+├── holdout/
+│   ├── holdout_results.csv
+│   ├── final_model.json
+│   ├── test_predictions.csv
+│   ├── plot_manifest.json
+│   └── workflow-specific plots
+├── kfold/
+│   ├── kfold_fold_results.csv
+│   ├── kfold_summary_results.csv
+│   ├── final_model.json
+│   ├── test_predictions.csv
+│   ├── out_of_fold_predictions.csv
+│   ├── plot_manifest.json
+│   └── workflow-specific plots
+└── comparison.json
+```
+
+- In `--mode holdout`, only `common/` and `holdout/` are created.
+- In `--mode kfold`, only `common/` and `kfold/` are created.
+- `comparison.json` is generated only when `--mode both` is selected.
+
+### Numerical Results & Manifests
+1. `common/split_summary.json`: Split proportions, sample counts, row indices, fold memberships, and skipped row details.
+2. `holdout/holdout_results.csv`: Per-candidate train and validation MSE, RMSE, MAE, R², and condition numbers.
+3. `kfold/kfold_fold_results.csv`: Per-fold train and validation metrics across folds.
+4. `kfold/kfold_summary_results.csv`: Mean and standard deviation of validation metrics across folds.
+5. `<workflow>/final_model.json`: Selected degree, L2 strength, scaled & original-basis coefficients, scaling statistics, solver used, condition number, condition warning, and final test metrics.
+6. `<workflow>/test_predictions.csv`: Original CSV row index, X, actual Y, predicted Y, and residual on untouched test set.
+7. `kfold/out_of_fold_predictions.csv`: Cross-validated out-of-fold predictions for development data.
+8. `<dir>/plot_manifest.json`: Manifest recording every figure generated in that directory.
+9. `comparison.json`: Neutral comparison summary when running `--mode both`.
 
 ### Visual Outputs
-- `01_original_data.png`: Input scatter plot before splitting.
-- `02_data_splits.png`: Scatter plot showing train, validation, and test subsets.
-- `03_split_sizes.png`: Bar chart summarizing subset sample allocation.
-- `04_holdout_validation_rmse.png`: Validation RMSE curves across candidate degrees and L2 values.
-- `05_train_validation_error.png`: Bias-variance trade-off curves for selected L2 value.
-- `06_holdout_rmse_heatmap.png`: Validation RMSE heatmap.
-- `07_candidate_models.png`: Fitted polynomial curves for representative degrees on training data.
-- `08_kfold_assignments.png`: Validation fold membership matrix.
-- `09_kfold_mean_rmse.png`: Cross-validation mean RMSE with error bars.
-- `10_kfold_rmse_heatmap.png`: Cross-validation mean RMSE heatmap.
-- `10b_kfold_rmse_std_heatmap.png`: Cross-validation RMSE standard deviation heatmap.
-- `11_fold_metrics.png`: Per-fold validation RMSE bar chart.
-- `12_out_of_fold_predictions.png`: Out-of-fold actual vs. predicted scatter plot.
-- `13_final_polynomial_fit.png`: Final polynomial curve fitted on development data against test points.
-- `13b_final_polynomial_bootstrap_band.png` (Optional): Bootstrap model-fit uncertainty band.
-- `14_test_actual_vs_predicted.png`: Final test actual vs. predicted scatter plot.
-- `15_test_residuals.png`: Residual vs. predicted diagnostic scatter plot.
-- `16_test_residual_histogram.png`: Residual distribution histogram.
-- `17_final_metrics.png`: Clean summary bar chart of final test performance metrics.
-- `18_model_coefficients.png`: Fitted polynomial coefficients bar chart.
-- `19_condition_numbers.png`: Design matrix condition number vs. degree.
-- `20_results_dashboard.png`: Presentation-ready 4-panel summary dashboard.
+- `common/01_original_data.png`: Input scatter plot before splitting.
+- `common/02_data_splits.png`: Scatter plot showing train, validation, and test subsets.
+- `common/03_split_sizes.png`: Bar chart summarizing subset sample allocation.
+- `holdout/04_holdout_validation_rmse.png`: Validation RMSE curves across candidate degrees and L2 values.
+- `holdout/05_train_validation_error.png`: Bias-variance trade-off curves for selected L2 value.
+- `holdout/06_holdout_rmse_heatmap.png`: Validation RMSE heatmap.
+- `holdout/07_candidate_models.png`: Fitted polynomial curves for representative degrees on training data.
+- `kfold/08_kfold_assignments.png`: Validation fold membership matrix.
+- `kfold/09_kfold_mean_rmse.png`: Cross-validation mean RMSE with error bars.
+- `kfold/10_kfold_rmse_heatmap.png`: Cross-validation mean RMSE heatmap.
+- `kfold/10b_kfold_rmse_std_heatmap.png`: Cross-validation RMSE standard deviation heatmap.
+- `kfold/11_fold_metrics.png`: Per-fold validation RMSE bar chart.
+- `kfold/12_out_of_fold_predictions.png`: Out-of-fold actual vs. predicted scatter plot.
+- `<workflow>/13_final_polynomial_fit.png`: Final polynomial curve fitted on development data against test points.
+- `<workflow>/13b_final_polynomial_bootstrap_band.png` (Optional): Bootstrap model-fit uncertainty band.
+- `<workflow>/14_test_actual_vs_predicted.png`: Final test actual vs. predicted scatter plot.
+- `<workflow>/15_test_residuals.png`: Residual vs. predicted diagnostic scatter plot.
+- `<workflow>/16_test_residual_histogram.png`: Residual distribution histogram.
+- `<workflow>/17_final_metrics.png`: Clean summary bar chart of final test performance metrics.
+- `<workflow>/18_model_coefficients.png`: Fitted polynomial coefficients bar chart.
+- `<workflow>/19_condition_numbers.png`: Design matrix condition number vs. degree.
+- `<workflow>/20_results_dashboard.png`: Presentation-ready 4-panel summary dashboard.

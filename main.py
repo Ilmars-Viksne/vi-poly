@@ -195,9 +195,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 fold.val_indices
             ].tolist()
 
-    # 3. Initialize Reporter and Visualizer
-    reporter = ReportGenerator(output_path)
-    reporter.write_split_summary(
+    # 3. Common Outputs
+    common_dir = output_path / "common"
+    common_reporter = ReportGenerator(common_dir)
+    common_reporter.write_split_summary(
         seed=args.seed,
         train_ratio=args.train_ratio,
         val_ratio=args.validation_ratio,
@@ -211,32 +212,37 @@ def run_pipeline(args: argparse.Namespace) -> None:
         skipped_rows=loaded_data.skipped_rows,
     )
 
-    visualizer = None
     if not args.no_plots:
-        visualizer = RegressionVisualizer(
-            output_dir=output_path,
+        common_visualizer = RegressionVisualizer(
+            output_dir=common_dir,
             plot_format=args.plot_format,
             plot_dpi=args.plot_dpi,
             plot_style=args.plot_style,
             show_plots=args.show_plots,
         )
-        visualizer.plot_01_original_data(x_all, y_all)
-        visualizer.plot_02_data_splits(
+        common_visualizer.plot_01_original_data(x_all, y_all)
+        common_visualizer.plot_02_data_splits(
             x_all, y_all, split.train_indices, split.val_indices, split.test_indices
         )
-        visualizer.plot_03_split_sizes(
+        common_visualizer.plot_03_split_sizes(
             len(split.train_indices), len(split.val_indices), len(split.test_indices)
         )
+        common_reporter.write_plot_manifest(common_visualizer.manifest_entries)
 
     # Dense X Grid for smooth curve plotting across observed X range
     x_min, x_max = float(np.min(x_all)), float(np.max(x_all))
     x_grid = np.linspace(x_min, x_max, args.curve_points)
 
     summary_outputs = []
+    holdout_res = None
+    kfold_res = None
 
     # 4. Execute Workflows
     # --- HOLDOUT WORKFLOW ---
     if args.mode in ["holdout", "both"]:
+        holdout_dir = output_path / "holdout"
+        holdout_reporter = ReportGenerator(holdout_dir)
+
         holdout_selector = HoldoutModelSelector(
             degrees=args.degrees,
             l2_lambdas=args.l2_values,
@@ -254,20 +260,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
             split.dev_indices,
         )
 
-        reporter.write_holdout_results(holdout_res)
-        reporter.write_final_model(
+        holdout_reporter.write_holdout_results(holdout_res)
+        holdout_reporter.write_final_model(
             workflow_name="holdout",
             best_candidate=holdout_res.best_candidate,
             beta_scaled=holdout_res.final_refitted_beta_scaled,
             beta_orig=holdout_res.final_refitted_beta_orig,
             transformer=holdout_res.final_refitted_transformer,
             test_metrics=holdout_res.final_test_metrics,
-            solver_used="solve",
-            condition_number=holdout_res.best_candidate.condition_number,
+            fit_details=holdout_res.final_fit_details,
             selection_rtol=args.selection_rtol,
             selection_atol=args.selection_atol,
         )
-        reporter.write_test_predictions(
+        holdout_reporter.write_test_predictions(
             loaded_data.original_indices[split.test_indices],
             x_all[split.test_indices],
             y_all[split.test_indices],
@@ -275,17 +280,24 @@ def run_pipeline(args: argparse.Namespace) -> None:
             holdout_res.test_residuals,
         )
 
-        if visualizer is not None:
+        if not args.no_plots:
+            holdout_visualizer = RegressionVisualizer(
+                output_dir=holdout_dir,
+                plot_format=args.plot_format,
+                plot_dpi=args.plot_dpi,
+                plot_style=args.plot_style,
+                show_plots=args.show_plots,
+            )
             best_deg = holdout_res.best_candidate.degree
             best_l2 = holdout_res.best_candidate.l2_lambda
 
-            visualizer.plot_04_holdout_validation_rmse(
+            holdout_visualizer.plot_04_holdout_validation_rmse(
                 holdout_res.candidates, best_deg, best_l2
             )
-            visualizer.plot_05_train_validation_error(
+            holdout_visualizer.plot_05_train_validation_error(
                 holdout_res.candidates, best_l2, best_deg
             )
-            visualizer.plot_06_holdout_rmse_heatmap(
+            holdout_visualizer.plot_06_holdout_rmse_heatmap(
                 holdout_res.candidates, best_deg, best_l2
             )
 
@@ -293,11 +305,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
             cand_degs = sorted({c.degree for c in holdout_res.candidates})
             select_degs = sorted(
                 {
-                            cand_degs[0],
-                            cand_degs[len(cand_degs) // 2],
-                            best_deg,
-                            cand_degs[-1],
-                        }
+                    cand_degs[0],
+                    cand_degs[len(cand_degs) // 2],
+                    best_deg,
+                    cand_degs[-1],
+                }
             )
             cand_curves = []
             for cd in select_degs:
@@ -311,7 +323,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 X_g = c_trans.transform(x_grid)
                 cand_curves.append((cd, best_l2, x_grid, c_reg.predict(X_g)))
 
-            visualizer.plot_07_candidate_models(
+            holdout_visualizer.plot_07_candidate_models(
                 x_all[split.train_indices],
                 y_all[split.train_indices],
                 x_all[split.val_indices],
@@ -323,7 +335,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             X_grid_dev = holdout_res.final_refitted_transformer.transform(x_grid)
             y_grid_pred = X_grid_dev @ holdout_res.final_refitted_beta_scaled
 
-            visualizer.plot_13_final_polynomial_fit(
+            holdout_visualizer.plot_13_final_polynomial_fit(
                 x_all[split.dev_indices],
                 y_all[split.dev_indices],
                 x_all[split.test_indices],
@@ -348,7 +360,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     args.bootstrap_samples,
                     args.bootstrap_seed,
                 )
-                visualizer.plot_13b_final_polynomial_bootstrap_band(
+                holdout_visualizer.plot_13b_final_polynomial_bootstrap_band(
                     x_all[split.dev_indices],
                     y_all[split.dev_indices],
                     x_all[split.test_indices],
@@ -363,24 +375,24 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     workflow="holdout",
                 )
 
-            visualizer.plot_14_test_actual_vs_predicted(
+            holdout_visualizer.plot_14_test_actual_vs_predicted(
                 y_all[split.test_indices],
                 holdout_res.test_predictions,
                 holdout_res.final_test_metrics,
                 workflow="holdout",
             )
-            visualizer.plot_15_test_residuals(
+            holdout_visualizer.plot_15_test_residuals(
                 holdout_res.test_predictions,
                 holdout_res.test_residuals,
                 workflow="holdout",
             )
-            visualizer.plot_16_test_residual_histogram(
+            holdout_visualizer.plot_16_test_residual_histogram(
                 holdout_res.test_residuals, args.residual_bins, workflow="holdout"
             )
-            visualizer.plot_17_final_metrics(
+            holdout_visualizer.plot_17_final_metrics(
                 holdout_res.final_test_metrics, workflow="holdout"
             )
-            visualizer.plot_18_model_coefficients(
+            holdout_visualizer.plot_18_model_coefficients(
                 holdout_res.final_refitted_beta_orig
                 if args.scale_features
                 else holdout_res.final_refitted_beta_scaled,
@@ -396,14 +408,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 for c in holdout_res.candidates
                 if c.l2_lambda == best_l2
             ]
-            visualizer.plot_19_condition_numbers(
+            holdout_visualizer.plot_19_condition_numbers(
                 cond_degs,
                 cond_nums,
                 args.condition_warning_threshold,
                 workflow="holdout",
             )
 
-            visualizer.plot_20_results_dashboard(
+            holdout_visualizer.plot_20_results_dashboard(
                 x_all[split.dev_indices],
                 y_all[split.dev_indices],
                 x_all[split.test_indices],
@@ -418,6 +430,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 holdout_res.final_test_metrics,
                 workflow="holdout",
             )
+            holdout_reporter.write_plot_manifest(holdout_visualizer.manifest_entries)
 
         summary_outputs.append(
             (
@@ -430,6 +443,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     # --- KFOLD WORKFLOW ---
     if args.mode in ["kfold", "both"]:
+        kfold_dir = output_path / "kfold"
+        kfold_reporter = ReportGenerator(kfold_dir)
+
         kfold_selector = KFoldModelSelector(
             degrees=args.degrees,
             l2_lambdas=args.l2_values,
@@ -444,20 +460,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
             x_all, y_all, split.dev_indices, split.test_indices
         )
 
-        reporter.write_kfold_results(kfold_res)
-        reporter.write_final_model(
+        kfold_reporter.write_kfold_results(kfold_res)
+        kfold_reporter.write_final_model(
             workflow_name="kfold",
             best_candidate=kfold_res.best_candidate,
             beta_scaled=kfold_res.final_refitted_beta_scaled,
             beta_orig=kfold_res.final_refitted_beta_orig,
             transformer=kfold_res.final_refitted_transformer,
             test_metrics=kfold_res.final_test_metrics,
-            solver_used="solve",
-            condition_number=kfold_res.best_candidate.mean_condition_number,
+            fit_details=kfold_res.final_fit_details,
             selection_rtol=args.selection_rtol,
             selection_atol=args.selection_atol,
         )
-        reporter.write_test_predictions(
+        kfold_reporter.write_test_predictions(
             loaded_data.original_indices[split.test_indices],
             x_all[split.test_indices],
             y_all[split.test_indices],
@@ -472,7 +487,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         for fold in dev_fold_splits:
             dev_fold_nums[fold.val_indices] = fold.fold_index + 1
 
-        reporter.write_oof_predictions(
+        kfold_reporter.write_oof_predictions(
             loaded_data.original_indices[split.dev_indices],
             dev_fold_nums,
             x_all[split.dev_indices],
@@ -481,21 +496,32 @@ def run_pipeline(args: argparse.Namespace) -> None:
             kfold_res.oof_residuals,
         )
 
-        if visualizer is not None:
+        if not args.no_plots:
+            kfold_visualizer = RegressionVisualizer(
+                output_dir=kfold_dir,
+                plot_format=args.plot_format,
+                plot_dpi=args.plot_dpi,
+                plot_style=args.plot_style,
+                show_plots=args.show_plots,
+            )
             best_deg = kfold_res.best_candidate.degree
             best_l2 = kfold_res.best_candidate.l2_lambda
 
-            visualizer.plot_08_kfold_assignments(split.dev_indices, dev_fold_splits)
-            visualizer.plot_09_kfold_mean_rmse(kfold_res.candidates, best_deg, best_l2)
-            visualizer.plot_10_kfold_rmse_heatmap(
+            kfold_visualizer.plot_08_kfold_assignments(
+                split.dev_indices, dev_fold_splits
+            )
+            kfold_visualizer.plot_09_kfold_mean_rmse(
                 kfold_res.candidates, best_deg, best_l2
             )
-            visualizer.plot_10b_kfold_rmse_std_heatmap(
+            kfold_visualizer.plot_10_kfold_rmse_heatmap(
+                kfold_res.candidates, best_deg, best_l2
+            )
+            kfold_visualizer.plot_10b_kfold_rmse_std_heatmap(
                 kfold_res.candidates, best_deg, best_l2
             )
 
             sel_cand = kfold_res.best_candidate
-            visualizer.plot_11_fold_metrics(
+            kfold_visualizer.plot_11_fold_metrics(
                 sel_cand.fold_results,
                 sel_cand.mean_val_metrics.rmse,
                 sel_cand.std_val_metrics.rmse,
@@ -508,14 +534,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 kfold_res.oof_predictions,
                 num_predictors=best_deg,
             )
-            visualizer.plot_12_out_of_fold_predictions(
+            kfold_visualizer.plot_12_out_of_fold_predictions(
                 y_all[split.dev_indices], kfold_res.oof_predictions, oof_metrics
             )
 
             X_grid_dev = kfold_res.final_refitted_transformer.transform(x_grid)
             y_grid_pred = X_grid_dev @ kfold_res.final_refitted_beta_scaled
 
-            visualizer.plot_13_final_polynomial_fit(
+            kfold_visualizer.plot_13_final_polynomial_fit(
                 x_all[split.dev_indices],
                 y_all[split.dev_indices],
                 x_all[split.test_indices],
@@ -539,7 +565,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     args.bootstrap_samples,
                     args.bootstrap_seed,
                 )
-                visualizer.plot_13b_final_polynomial_bootstrap_band(
+                kfold_visualizer.plot_13b_final_polynomial_bootstrap_band(
                     x_all[split.dev_indices],
                     y_all[split.dev_indices],
                     x_all[split.test_indices],
@@ -554,22 +580,24 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     workflow="kfold",
                 )
 
-            visualizer.plot_14_test_actual_vs_predicted(
+            kfold_visualizer.plot_14_test_actual_vs_predicted(
                 y_all[split.test_indices],
                 kfold_res.test_predictions,
                 kfold_res.final_test_metrics,
                 workflow="kfold",
             )
-            visualizer.plot_15_test_residuals(
-                kfold_res.test_predictions, kfold_res.test_residuals, workflow="kfold"
+            kfold_visualizer.plot_15_test_residuals(
+                kfold_res.test_predictions,
+                kfold_res.test_residuals,
+                workflow="kfold",
             )
-            visualizer.plot_16_test_residual_histogram(
+            kfold_visualizer.plot_16_test_residual_histogram(
                 kfold_res.test_residuals, args.residual_bins, workflow="kfold"
             )
-            visualizer.plot_17_final_metrics(
+            kfold_visualizer.plot_17_final_metrics(
                 kfold_res.final_test_metrics, workflow="kfold"
             )
-            visualizer.plot_18_model_coefficients(
+            kfold_visualizer.plot_18_model_coefficients(
                 kfold_res.final_refitted_beta_orig
                 if args.scale_features
                 else kfold_res.final_refitted_beta_scaled,
@@ -585,11 +613,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 for c in kfold_res.candidates
                 if c.l2_lambda == best_l2
             ]
-            visualizer.plot_19_condition_numbers(
-                cond_degs, cond_nums, args.condition_warning_threshold, workflow="kfold"
+            kfold_visualizer.plot_19_condition_numbers(
+                cond_degs,
+                cond_nums,
+                args.condition_warning_threshold,
+                workflow="kfold",
             )
 
-            visualizer.plot_20_results_dashboard(
+            kfold_visualizer.plot_20_results_dashboard(
                 x_all[split.dev_indices],
                 y_all[split.dev_indices],
                 x_all[split.test_indices],
@@ -604,6 +635,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 kfold_res.final_test_metrics,
                 workflow="kfold",
             )
+            kfold_reporter.write_plot_manifest(kfold_visualizer.manifest_entries)
 
         summary_outputs.append(
             (
@@ -614,9 +646,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
             )
         )
 
-    # Write Manifest if plots generated
-    if visualizer is not None:
-        reporter.write_plot_manifest(visualizer.manifest_entries)
+    # Top-level comparison for 'both' mode
+    if args.mode == "both" and holdout_res is not None and kfold_res is not None:
+        top_reporter = ReportGenerator(output_path)
+        top_reporter.write_comparison(holdout_res, kfold_res)
 
     # 5. Print Terminal Summary
     _print_terminal_summary(args, N, split, summary_outputs, output_path)
@@ -680,6 +713,10 @@ def _print_terminal_summary(
         print(f"  Final Test RMSE:   {metrics.rmse:.6f}")
         print(f"  Final Test MAE:    {metrics.mae:.6f}")
         print(f"  Final Test R²:     {metrics.r_squared:.6f}")
+        print("-" * 70)
+
+    if args.mode == "both":
+        print("No workflow was selected using test-set performance.")
         print("-" * 70)
 
     print(f"Output Directory:    {output_path.resolve()}")
