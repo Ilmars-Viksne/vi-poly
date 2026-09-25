@@ -1,6 +1,7 @@
 """Main CLI script for Polynomial Regression Workflows."""
 
 import argparse
+import math
 import pathlib
 import sys
 from typing import Any
@@ -20,9 +21,6 @@ from polynomial_regression.splitting import DataSplitter, KFoldSplitter
 from polynomial_regression.visualization import RegressionVisualizer
 
 
-import math
-
-
 def _validate_configuration(args: argparse.Namespace) -> None:
     """Validates pipeline configuration settings and canonicalizes search grids."""
 
@@ -37,11 +35,15 @@ def _validate_configuration(args: argparse.Namespace) -> None:
         raise ValueError("Requested Y column name cannot be empty or whitespace-only.")
 
     # 2. Max degree validation
-    if not hasattr(args, "max_degree") or not isinstance(args.max_degree, (int, np.integer)):
+    if not hasattr(args, "max_degree") or not isinstance(
+        args.max_degree, (int, np.integer)
+    ):
         raise ValueError("Maximum polynomial degree must be an integer.")
     max_deg = int(args.max_degree)
     if max_deg < 0:
-        raise ValueError(f"Maximum polynomial degree must be non-negative; received {max_deg}.")
+        raise ValueError(
+            f"Maximum polynomial degree must be non-negative; received {max_deg}."
+        )
 
     # 3. Degrees validation
     if not hasattr(args, "degrees") or not args.degrees:
@@ -50,7 +52,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
     validated_degrees: list[int] = []
     for deg in args.degrees:
         if not isinstance(deg, (int, np.integer)):
-            raise ValueError(f"Polynomial degrees must be integers; received {deg}.")
+            raise TypeError(f"Polynomial degrees must be integers; received {deg}.")
         d_int = int(deg)
         if d_int < 0:
             raise ValueError(
@@ -82,15 +84,15 @@ def _validate_configuration(args: argparse.Namespace) -> None:
     if not hasattr(args, "folds") or not isinstance(args.folds, (int, np.integer)):
         raise ValueError("Number of folds must be an integer.")
     if int(args.folds) < 2:
-        raise ValueError(
-            f"Number of folds must be at least 2; received {args.folds}."
-        )
+        raise ValueError(f"Number of folds must be at least 2; received {args.folds}.")
 
     # 6. Split ratios validation
     train_ratio = float(args.train_ratio)
     val_ratio = float(args.validation_ratio)
     test_ratio = float(args.test_ratio)
-    if not (np.isfinite(train_ratio) and np.isfinite(val_ratio) and np.isfinite(test_ratio)):
+    if not (
+        np.isfinite(train_ratio) and np.isfinite(val_ratio) and np.isfinite(test_ratio)
+    ):
         raise ValueError("Split ratios must be finite numbers.")
     if train_ratio <= 0 or val_ratio <= 0 or test_ratio <= 0:
         raise ValueError(
@@ -103,7 +105,9 @@ def _validate_configuration(args: argparse.Namespace) -> None:
         )
 
     # 7. Curve points validation
-    if not hasattr(args, "curve_points") or not isinstance(args.curve_points, (int, np.integer)):
+    if not hasattr(args, "curve_points") or not isinstance(
+        args.curve_points, (int, np.integer)
+    ):
         raise ValueError("Curve point count must be an integer.")
     if int(args.curve_points) < 2:
         raise ValueError(
@@ -111,7 +115,9 @@ def _validate_configuration(args: argparse.Namespace) -> None:
         )
 
     # 8. Bootstrap samples validation
-    if not hasattr(args, "bootstrap_samples") or not isinstance(args.bootstrap_samples, (int, np.integer)):
+    if not hasattr(args, "bootstrap_samples") or not isinstance(
+        args.bootstrap_samples, (int, np.integer)
+    ):
         raise ValueError("Bootstrap sample count must be an integer.")
     if int(args.bootstrap_samples) < 0:
         raise ValueError(
@@ -119,7 +125,9 @@ def _validate_configuration(args: argparse.Namespace) -> None:
         )
 
     # 9. Plot DPI validation
-    if not hasattr(args, "plot_dpi") or not isinstance(args.plot_dpi, (int, np.integer)):
+    if not hasattr(args, "plot_dpi") or not isinstance(
+        args.plot_dpi, (int, np.integer)
+    ):
         raise ValueError("Plot DPI must be an integer.")
     if int(args.plot_dpi) <= 0:
         raise ValueError(
@@ -146,17 +154,19 @@ def _validate_configuration(args: argparse.Namespace) -> None:
         )
 
     # 12. Residual bins
-    if args.residual_bins is not None:
-        if not isinstance(args.residual_bins, (int, np.integer)) or int(args.residual_bins) <= 0:
-            raise ValueError(
-                f"Residual bins count must be a positive integer; received {args.residual_bins}."
-            )
+    if args.residual_bins is not None and (
+        not isinstance(args.residual_bins, (int, np.integer))
+        or int(args.residual_bins) <= 0
+    ):
+        raise ValueError(
+            f"Residual bins count must be a positive integer; received {args.residual_bins}."
+        )
 
     # 13. Seeds validation
     if not isinstance(args.seed, (int, np.integer)):
-        raise ValueError("Random seed must be an integer.")
+        raise TypeError("Random seed must be an integer.")
     if not isinstance(args.bootstrap_seed, (int, np.integer)):
-        raise ValueError("Bootstrap seed must be an integer.")
+        raise TypeError("Bootstrap seed must be an integer.")
 
     # Store raw requested grids before canonicalization
     if not hasattr(args, "_requested_degrees") or args._requested_degrees is None:
