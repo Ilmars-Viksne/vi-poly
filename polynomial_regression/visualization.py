@@ -1,15 +1,30 @@
 """Scientific visualization module for polynomial regression using Matplotlib."""
 
 import pathlib
+import warnings
 from typing import Any
 
-import matplotlib
-
-# Force non-interactive Agg backend if no display requested
 import matplotlib.pyplot as plt
+from matplotlib.colors import ListedColormap
+from matplotlib.patches import Patch
 import numpy as np
 
 from .metrics import EvaluationMetrics
+
+WORKFLOW_DISPLAY_NAMES = {
+    "common": "Common",
+    "holdout": "Holdout",
+    "kfold": "K-Fold",
+}
+
+
+def _workflow_filename(number: str, workflow: str, description: str) -> str:
+    wf_norm = workflow.lower().strip()
+    if wf_norm not in WORKFLOW_DISPLAY_NAMES:
+        raise ValueError(f"Unsupported workflow name: {workflow}")
+    if wf_norm == "common":
+        return f"{number}_{description}"
+    return f"{number}_{wf_norm}_{description}"
 
 
 class RegressionVisualizer:
@@ -29,9 +44,6 @@ class RegressionVisualizer:
         self.plot_dpi = plot_dpi
         self.show_plots = show_plots
 
-        if not self.show_plots:
-            matplotlib.use("Agg")
-
         if plot_style and plot_style in plt.style.available:
             plt.style.use(plot_style)
 
@@ -48,6 +60,114 @@ class RegressionVisualizer:
 
         self.manifest_entries: list[dict[str, Any]] = []
 
+    @staticmethod
+    def _r_squared_axis_limits(value: float) -> tuple[float, float]:
+        if not np.isfinite(value):
+            raise ValueError(f"R-squared must be finite; received {value}.")
+
+        lower_reference = min(0.0, value)
+        upper_reference = max(1.0, value)
+
+        span = upper_reference - lower_reference
+        margin = max(0.1, 0.1 * span)
+
+        return lower_reference - margin, upper_reference + margin
+
+    @staticmethod
+    def build_kfold_membership_matrix(
+        development_sample_count: int,
+        fold_splits: list[Any],
+    ) -> np.ndarray:
+        if (
+            not isinstance(development_sample_count, (int, np.integer))
+            or development_sample_count <= 0
+        ):
+            raise ValueError(
+                f"development_sample_count must be a positive integer; received {development_sample_count}."
+            )
+        if not isinstance(fold_splits, list) or len(fold_splits) < 2:
+            raise ValueError(
+                f"fold_splits must contain at least 2 folds; received {len(fold_splits) if isinstance(fold_splits, list) else fold_splits}."
+            )
+
+        num_folds = len(fold_splits)
+        TRAINING = 0
+        VALIDATION = 1
+
+        membership = np.zeros((num_folds, development_sample_count), dtype=np.uint8)
+        seen_fold_indices = set()
+
+        for fold in fold_splits:
+            f_idx = getattr(fold, "fold_index", None)
+            if f_idx is None:
+                raise ValueError("FoldSplit object missing fold_index attribute.")
+            if (
+                not isinstance(f_idx, (int, np.integer))
+                or f_idx < 0
+                or f_idx >= num_folds
+            ):
+                raise ValueError(f"Invalid fold_index: {f_idx}.")
+            if f_idx in seen_fold_indices:
+                raise ValueError(f"Duplicate fold_index encountered: {f_idx}.")
+            seen_fold_indices.add(f_idx)
+
+            val_indices = getattr(fold, "val_indices", None)
+            train_indices = getattr(fold, "train_indices", None)
+            if val_indices is None or train_indices is None:
+                raise ValueError(
+                    "FoldSplit object missing val_indices or train_indices."
+                )
+
+            val_arr = np.asarray(val_indices, dtype=int)
+            train_arr = np.asarray(train_indices, dtype=int)
+
+            if val_arr.ndim != 1 or train_arr.ndim != 1:
+                raise ValueError("Fold indices must be 1D arrays.")
+
+            if len(val_arr) == 0 or len(train_arr) == 0:
+                raise ValueError(
+                    "Train and validation sets within each fold must not be empty."
+                )
+
+            if np.any(val_arr < 0) or np.any(val_arr >= development_sample_count):
+                raise ValueError(
+                    f"Validation indices out of bounds for development sample count {development_sample_count}."
+                )
+            if np.any(train_arr < 0) or np.any(train_arr >= development_sample_count):
+                raise ValueError(
+                    f"Train indices out of bounds for development sample count {development_sample_count}."
+                )
+
+            if len(np.unique(val_arr)) != len(val_arr):
+                raise ValueError(
+                    f"Fold {f_idx} validation indices contain duplicates."
+                )
+            if len(np.unique(train_arr)) != len(train_arr):
+                raise ValueError(f"Fold {f_idx} train indices contain duplicates.")
+
+            if len(np.intersect1d(val_arr, train_arr)) > 0:
+                raise ValueError(
+                    f"Fold {f_idx} train and validation indices overlap."
+                )
+
+            if (
+                len(val_arr) + len(train_arr) != development_sample_count
+                or len(np.union1d(val_arr, train_arr)) != development_sample_count
+            ):
+                raise ValueError(
+                    f"Fold {f_idx} train and validation indices do not cover all development samples."
+                )
+
+            membership[f_idx, val_arr] = VALIDATION
+
+        col_val_sums = membership.sum(axis=0)
+        if not np.all(col_val_sums == 1):
+            raise ValueError(
+                "Fold assignment invariant violated: each sample must belong to validation in exactly 1 fold."
+            )
+
+        return membership
+
     def _save_and_close(
         self,
         fig: plt.Figure,
@@ -58,6 +178,10 @@ class RegressionVisualizer:
         parameters: dict[str, Any],
         source_file: str,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        if wf_norm not in WORKFLOW_DISPLAY_NAMES:
+            raise ValueError(f"Unsupported workflow: {workflow}")
+
         filename = f"{filename_stem}.{self.plot_format}"
         filepath = self.output_dir / filename
 
@@ -72,7 +196,7 @@ class RegressionVisualizer:
                 "plot_filename": filename,
                 "plot_title": title,
                 "plot_type": plot_type,
-                "workflow": workflow,
+                "workflow": wf_norm,
                 "parameters_represented": parameters,
                 "source_numerical_result_file": source_file,
                 "plot_format": self.plot_format,
@@ -96,18 +220,20 @@ class RegressionVisualizer:
             s=25,
             label="Observations",
         )
-        ax.set_title(f"01 Original Dataset (N = {len(x)})")
+        title = f"01 Original Dataset (N = {len(x)})"
+        ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("01", "common", "original_data")
         return self._save_and_close(
             fig,
-            "01_original_data",
+            filename_stem,
             "Original Dataset",
             "Scatter",
-            "General",
+            "common",
             {"sample_count": len(x)},
             "split_summary.json",
         )
@@ -150,18 +276,20 @@ class RegressionVisualizer:
             label=f"Test ({len(test_idx)})",
         )
 
-        ax.set_title("02 Train / Validation / Test Data Splits")
+        title = "02 Train / Validation / Test Data Splits"
+        ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("02", "common", "data_splits")
         return self._save_and_close(
             fig,
-            "02_data_splits",
+            filename_stem,
             "Data Splits",
             "Scatter",
-            "Holdout",
+            "common",
             {
                 "train_count": len(train_idx),
                 "val_count": len(val_idx),
@@ -199,16 +327,18 @@ class RegressionVisualizer:
             )
 
         ax.set_ylim(0, max(counts) * 1.2)
-        ax.set_title("03 Subset Sample Allocation")
+        title = "03 Subset Sample Allocation"
+        ax.set_title(title)
         ax.set_ylabel("Number of Samples")
         ax.grid(axis="y", linestyle="--", alpha=0.5)
 
+        filename_stem = _workflow_filename("03", "common", "split_sizes")
         return self._save_and_close(
             fig,
-            "03_split_sizes",
+            filename_stem,
             "Split Sizes",
             "Bar Chart",
-            "General",
+            "common",
             {"total_samples": total},
             "split_summary.json",
         )
@@ -217,6 +347,9 @@ class RegressionVisualizer:
     def plot_04_holdout_validation_rmse(
         self, candidates: list[Any], best_degree: int, best_l2: float
     ) -> pathlib.Path:
+        wf_norm = "holdout"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(8, 5))
         degrees = sorted({c.degree for c in candidates})
         l2_values = sorted({c.l2_lambda for c in candidates})
@@ -244,19 +377,21 @@ class RegressionVisualizer:
             label=f"Selected (deg={best_degree}, L2={best_l2})",
         )
 
-        ax.set_title("04 Holdout Validation RMSE vs. Polynomial Degree")
+        title = f"04 {wf_disp}: Validation RMSE vs. Polynomial Degree"
+        ax.set_title(title)
         ax.set_xlabel("Polynomial Degree")
         ax.set_ylabel("Validation RMSE")
         ax.set_xticks(degrees)
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best", fontsize="small")
 
+        filename_stem = _workflow_filename("04", wf_norm, "validation_rmse")
         return self._save_and_close(
             fig,
-            "04_holdout_validation_rmse",
-            "Holdout Validation RMSE",
+            filename_stem,
+            title,
             "Line Plot",
-            "Holdout",
+            wf_norm,
             {"selected_degree": best_degree, "selected_l2": best_l2},
             "holdout_results.csv",
         )
@@ -265,6 +400,9 @@ class RegressionVisualizer:
     def plot_05_train_validation_error(
         self, candidates: list[Any], selected_l2: float, best_degree: int
     ) -> pathlib.Path:
+        wf_norm = "holdout"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(8, 5))
         cands_l2 = [c for c in candidates if c.l2_lambda == selected_l2]
         cands_l2.sort(key=lambda c: c.degree)
@@ -285,19 +423,21 @@ class RegressionVisualizer:
             label=f"Selected Degree ({best_degree})",
         )
 
-        ax.set_title(f"05 Bias-Variance Trade-off (L2 = {selected_l2})")
+        title = f"05 {wf_disp}: Bias-Variance Trade-off (L2 = {selected_l2})"
+        ax.set_title(title)
         ax.set_xlabel("Polynomial Degree")
         ax.set_ylabel("RMSE")
         ax.set_xticks(degs)
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("05", wf_norm, "train_validation_error")
         return self._save_and_close(
             fig,
-            "05_train_validation_error",
-            "Train vs Validation Error",
+            filename_stem,
+            title,
             "Line Plot",
-            "Holdout",
+            wf_norm,
             {"l2_lambda": selected_l2, "selected_degree": best_degree},
             "holdout_results.csv",
         )
@@ -306,13 +446,17 @@ class RegressionVisualizer:
     def plot_06_holdout_rmse_heatmap(
         self, candidates: list[Any], best_degree: int, best_l2: float
     ) -> pathlib.Path:
+        wf_norm = "holdout"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+        title = f"06 {wf_disp}: Validation RMSE Heatmap"
+        filename_stem = _workflow_filename("06", wf_norm, "rmse_heatmap")
         return self._plot_rmse_heatmap(
             candidates,
             best_degree,
             best_l2,
-            title="06 Holdout Validation RMSE Heatmap",
-            filename="06_holdout_rmse_heatmap",
-            workflow="Holdout",
+            title=title,
+            filename=filename_stem,
+            workflow=wf_norm,
             rmse_extractor=lambda c: c.val_metrics.rmse,
         )
 
@@ -327,6 +471,9 @@ class RegressionVisualizer:
             tuple[int, float, np.ndarray, np.ndarray]
         ],  # (deg, l2, x_grid, y_grid)
     ) -> pathlib.Path:
+        wf_norm = "holdout"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(9, 6))
 
         ax.scatter(
@@ -344,18 +491,20 @@ class RegressionVisualizer:
         for deg, l2, x_grid, y_grid in candidate_curves:
             ax.plot(x_grid, y_grid, linewidth=2, label=f"Degree {deg} (L2={l2})")
 
-        ax.set_title("07 Candidate Polynomial Models Comparison")
+        title = f"07 {wf_disp}: Candidate Polynomial Models Comparison"
+        ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("07", wf_norm, "candidate_models")
         return self._save_and_close(
             fig,
-            "07_candidate_models",
-            "Candidate Models Comparison",
+            filename_stem,
+            title,
             "Line Plot",
-            "Holdout",
+            wf_norm,
             {"candidate_degrees": [c[0] for c in candidate_curves]},
             "holdout_results.csv",
         )
@@ -364,34 +513,72 @@ class RegressionVisualizer:
     def plot_08_kfold_assignments(
         self, dev_indices: np.ndarray, fold_splits: list[Any]
     ) -> pathlib.Path:
-        fig, ax = plt.subplots(figsize=(9, 5))
+        wf_norm = "kfold"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
+        dev_count = len(dev_indices)
+        membership = self.build_kfold_membership_matrix(dev_count, fold_splits)
         k = len(fold_splits)
 
-        for fold in fold_splits:
-            fold_num = fold.fold_index + 1
-            val_idx = fold.val_indices
-            ax.scatter(
-                val_idx,
-                np.full_like(val_idx, fold_num),
-                color=self.colors["val"],
-                marker="s",
-                s=30,
-                label="Validation" if fold_num == 1 else "",
-            )
+        fig, ax = plt.subplots(figsize=(9, 5))
 
-        ax.set_yticks(range(1, k + 1))
-        ax.set_yticklabels([f"Fold {i}" for i in range(1, k + 1)])
-        ax.set_xlabel("Development Sample Index")
-        ax.set_title(f"08 K-Fold Validation Membership Matrix (K = {k})")
-        ax.grid(True, linestyle="--", alpha=0.5)
+        TRAINING_COLOR = "#BBD7E8"
+        VALIDATION_COLOR = "#E69F00"
 
+        cmap = ListedColormap([TRAINING_COLOR, VALIDATION_COLOR])
+
+        ax.imshow(
+            membership,
+            aspect="auto",
+            interpolation="nearest",
+            cmap=cmap,
+            vmin=0,
+            vmax=1,
+            origin="upper",
+        )
+
+        ax.set_yticks(range(k))
+        ax.set_yticklabels([f"Fold {i+1}" for i in range(k)])
+
+        max_ticks = 10
+        tick_positions = np.linspace(
+            0, dev_count - 1, min(max_ticks, dev_count), dtype=int
+        )
+        tick_positions = np.unique(tick_positions)
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([str(p) for p in tick_positions])
+
+        ax.set_xlabel("Development Sample Position")
+        ax.set_ylabel("Cross-Validation Fold")
+
+        title = f"08 {wf_disp}: Training and Validation Membership Matrix (K = {k})"
+        ax.set_title(title)
+
+        legend_handles = [
+            Patch(facecolor=TRAINING_COLOR, edgecolor="none", label="Training"),
+            Patch(facecolor=VALIDATION_COLOR, edgecolor="none", label="Validation"),
+        ]
+        ax.legend(
+            handles=legend_handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.15),
+            ncol=2,
+        )
+
+        filename_stem = _workflow_filename("08", wf_norm, "assignments")
         return self._save_and_close(
             fig,
-            "08_kfold_assignments",
-            "K-Fold Assignments",
-            "Scatter Matrix",
-            "KFold",
-            {"num_folds": k, "dev_samples": len(dev_indices)},
+            filename_stem,
+            title,
+            "Binary Membership Matrix",
+            wf_norm,
+            {
+                "num_folds": k,
+                "development_sample_count": dev_count,
+                "training_code": 0,
+                "validation_code": 1,
+                "validation_assignments_per_sample": 1,
+            },
             "split_summary.json",
         )
 
@@ -399,6 +586,9 @@ class RegressionVisualizer:
     def plot_09_kfold_mean_rmse(
         self, candidates: list[Any], best_degree: int, best_l2: float
     ) -> pathlib.Path:
+        wf_norm = "kfold"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(8, 5))
         degrees = sorted({c.degree for c in candidates})
         l2_values = sorted({c.l2_lambda for c in candidates})
@@ -428,19 +618,21 @@ class RegressionVisualizer:
             label=f"Selected (deg={best_degree}, L2={best_l2})",
         )
 
-        ax.set_title("09 K-Fold Cross-Validation Mean RMSE ± 1 Std")
+        title = f"09 {wf_disp}: Cross-Validation Mean RMSE ± 1 Std"
+        ax.set_title(title)
         ax.set_xlabel("Polynomial Degree")
         ax.set_ylabel("Mean Validation RMSE")
         ax.set_xticks(degrees)
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best", fontsize="small")
 
+        filename_stem = _workflow_filename("09", wf_norm, "mean_rmse")
         return self._save_and_close(
             fig,
-            "09_kfold_mean_rmse",
-            "Cross-Validation Mean RMSE",
+            filename_stem,
+            title,
             "Errorbar Plot",
-            "KFold",
+            wf_norm,
             {"selected_degree": best_degree, "selected_l2": best_l2},
             "kfold_summary_results.csv",
         )
@@ -449,13 +641,17 @@ class RegressionVisualizer:
     def plot_10_kfold_rmse_heatmap(
         self, candidates: list[Any], best_degree: int, best_l2: float
     ) -> pathlib.Path:
+        wf_norm = "kfold"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+        title = f"10 {wf_disp}: Validation Mean RMSE Heatmap"
+        filename_stem = _workflow_filename("10", wf_norm, "rmse_heatmap")
         return self._plot_rmse_heatmap(
             candidates,
             best_degree,
             best_l2,
-            title="10 K-Fold Validation Mean RMSE Heatmap",
-            filename="10_kfold_rmse_heatmap",
-            workflow="KFold",
+            title=title,
+            filename=filename_stem,
+            workflow=wf_norm,
             rmse_extractor=lambda c: c.mean_val_metrics.rmse,
         )
 
@@ -463,13 +659,17 @@ class RegressionVisualizer:
     def plot_10b_kfold_rmse_std_heatmap(
         self, candidates: list[Any], best_degree: int, best_l2: float
     ) -> pathlib.Path:
+        wf_norm = "kfold"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+        title = f"10b {wf_disp}: Validation RMSE Standard Deviation Heatmap"
+        filename_stem = _workflow_filename("10b", wf_norm, "rmse_std_heatmap")
         return self._plot_rmse_heatmap(
             candidates,
             best_degree,
             best_l2,
-            title="10b K-Fold Validation RMSE Standard Deviation Heatmap",
-            filename="10b_kfold_rmse_std_heatmap",
-            workflow="KFold",
+            title=title,
+            filename=filename_stem,
+            workflow=wf_norm,
             rmse_extractor=lambda c: c.std_val_metrics.rmse,
         )
 
@@ -482,6 +682,9 @@ class RegressionVisualizer:
         degree: int,
         l2: float,
     ) -> pathlib.Path:
+        wf_norm = "kfold"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(7, 4.5))
         folds = [fr.fold_index + 1 for fr in fold_results]
         rmses = [fr.val_metrics.rmse for fr in fold_results]
@@ -513,16 +716,18 @@ class RegressionVisualizer:
         ax.set_xticks(folds)
         ax.set_xlabel("Fold Number")
         ax.set_ylabel("Validation RMSE")
-        ax.set_title(f"11 Fold-by-Fold Performance (Degree={degree}, L2={l2})")
+        title = f"11 {wf_disp}: Fold-by-Fold Performance (Degree={degree}, L2={l2})"
+        ax.set_title(title)
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("11", wf_norm, "fold_metrics")
         return self._save_and_close(
             fig,
-            "11_fold_metrics",
-            "Fold-by-Fold Metrics",
+            filename_stem,
+            title,
             "Bar Chart",
-            "KFold",
+            wf_norm,
             {"degree": degree, "l2_lambda": l2, "mean_rmse": mean_rmse},
             "kfold_fold_results.csv",
         )
@@ -531,6 +736,9 @@ class RegressionVisualizer:
     def plot_12_out_of_fold_predictions(
         self, y_dev: np.ndarray, oof_preds: np.ndarray, metrics: EvaluationMetrics
     ) -> pathlib.Path:
+        wf_norm = "kfold"
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(6.5, 6))
         ax.scatter(
             y_dev,
@@ -542,7 +750,6 @@ class RegressionVisualizer:
             label="Out-of-Fold Predictions",
         )
 
-        # 45-degree reference line
         min_val = min(np.min(y_dev), np.min(oof_preds))
         max_val = max(np.max(y_dev), np.max(oof_preds))
         ax.plot(
@@ -562,18 +769,20 @@ class RegressionVisualizer:
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
 
-        ax.set_title("12 Out-of-Fold Actual vs. Predicted Y")
+        title = f"12 {wf_disp}: Out-of-Fold Actual vs. Predicted Y"
+        ax.set_title(title)
         ax.set_xlabel("Actual Y (Development Set)")
         ax.set_ylabel("Predicted Y (Out-of-Fold)")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="lower right")
 
+        filename_stem = _workflow_filename("12", wf_norm, "out_of_fold_predictions")
         return self._save_and_close(
             fig,
-            "12_out_of_fold_predictions",
-            "Out-of-Fold Predictions",
+            filename_stem,
+            title,
             "Scatter Plot",
-            "KFold",
+            wf_norm,
             {"oof_rmse": metrics.rmse, "oof_r2": metrics.r_squared},
             "out_of_fold_predictions.csv",
         )
@@ -592,6 +801,9 @@ class RegressionVisualizer:
         test_metrics: EvaluationMetrics,
         workflow: str,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(9, 6))
 
         ax.scatter(
@@ -614,20 +826,20 @@ class RegressionVisualizer:
             label=f"Final Polynomial Fit (deg={degree}, L2={l2})",
         )
 
-        ax.set_title(
-            f"13 Final Polynomial Fit on Development Data\nTest RMSE: {test_metrics.rmse:.3f} | Test R²: {test_metrics.r_squared:.3f}"
-        )
+        title = f"13 {wf_disp}: Final Polynomial Fit on Development Data\nTest RMSE: {test_metrics.rmse:.3f} | Test R²: {test_metrics.r_squared:.3f}"
+        ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("13", wf_norm, "final_polynomial_fit")
         return self._save_and_close(
             fig,
-            "13_final_polynomial_fit",
-            "Final Polynomial Fit",
+            filename_stem,
+            title,
             "Line Plot",
-            workflow,
+            wf_norm,
             {
                 "degree": degree,
                 "l2": l2,
@@ -637,8 +849,8 @@ class RegressionVisualizer:
             "final_model.json",
         )
 
-    # 13b. Bootstrap Prediction Band (Optional)
-    def plot_13b_final_polynomial_bootstrap_band(
+    # 13b. Bootstrap Fitted-Curve Uncertainty Band
+    def plot_13b_fitted_curve_uncertainty_band(
         self,
         x_dev: np.ndarray,
         y_dev: np.ndarray,
@@ -653,6 +865,9 @@ class RegressionVisualizer:
         num_bootstraps: int,
         workflow: str,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(9, 6))
 
         ax.scatter(
@@ -680,26 +895,48 @@ class RegressionVisualizer:
             upper_band,
             color=self.colors["bootstrap"],
             alpha=0.3,
-            label=f"Bootstrap Model Fit Uncertainty Band ({num_bootstraps} resamples)",
+            label=f"95% bootstrap fitted-curve uncertainty band ({num_bootstraps} resamples)",
         )
 
-        ax.set_title(
-            f"13b Final Polynomial Fit with Bootstrap Uncertainty (deg={degree}, L2={l2})"
-        )
+        title = f"13b {wf_disp}: Bootstrap Fitted-Curve Uncertainty Band (deg={degree}, L2={l2})"
+        ax.set_title(title)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename(
+            "13b", wf_norm, "fitted_curve_uncertainty_band"
+        )
         return self._save_and_close(
             fig,
-            "13b_final_polynomial_bootstrap_band",
-            "Bootstrap Uncertainty Band",
+            filename_stem,
+            title,
             "Line Band Plot",
-            workflow,
-            {"degree": degree, "l2": l2, "bootstrap_samples": num_bootstraps},
+            wf_norm,
+            {
+                "degree": degree,
+                "l2": l2,
+                "bootstrap_samples": num_bootstraps,
+                "lower_percentile": 2.5,
+                "upper_percentile": 97.5,
+                "interval_interpretation": "fitted_curve_uncertainty",
+            },
             "final_model.json",
         )
+
+    def plot_13b_final_polynomial_bootstrap_band(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> pathlib.Path:
+        warnings.warn(
+            "plot_13b_final_polynomial_bootstrap_band() is deprecated; "
+            "use plot_13b_fitted_curve_uncertainty_band().",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.plot_13b_fitted_curve_uncertainty_band(*args, **kwargs)
 
     # 14. Actual vs. Predicted Test Plot
     def plot_14_test_actual_vs_predicted(
@@ -709,6 +946,9 @@ class RegressionVisualizer:
         metrics: EvaluationMetrics,
         workflow: str,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(6.5, 6))
         ax.scatter(
             y_test,
@@ -739,18 +979,20 @@ class RegressionVisualizer:
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
 
-        ax.set_title("14 Test Set Actual vs. Predicted Y")
+        title = f"14 {wf_disp}: Test Set Actual vs. Predicted Y"
+        ax.set_title(title)
         ax.set_xlabel("Actual Test Y")
         ax.set_ylabel("Predicted Test Y")
         ax.grid(True, linestyle="--", alpha=0.5)
         ax.legend(loc="lower right")
 
+        filename_stem = _workflow_filename("14", wf_norm, "test_actual_vs_predicted")
         return self._save_and_close(
             fig,
-            "14_test_actual_vs_predicted",
-            "Test Actual vs Predicted",
+            filename_stem,
+            title,
             "Scatter Plot",
-            workflow,
+            wf_norm,
             {
                 "test_rmse": metrics.rmse,
                 "test_mae": metrics.mae,
@@ -763,6 +1005,9 @@ class RegressionVisualizer:
     def plot_15_test_residuals(
         self, y_pred: np.ndarray, residuals: np.ndarray, workflow: str
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(7, 5))
         ax.scatter(
             y_pred,
@@ -784,17 +1029,19 @@ class RegressionVisualizer:
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
 
-        ax.set_title("15 Residuals vs. Predicted Values (Diagnostic)")
+        title = f"15 {wf_disp}: Residuals vs. Predicted Values (Diagnostic)"
+        ax.set_title(title)
         ax.set_xlabel("Predicted Test Y")
         ax.set_ylabel("Residual (Actual - Predicted)")
         ax.grid(True, linestyle="--", alpha=0.5)
 
+        filename_stem = _workflow_filename("15", wf_norm, "test_residuals")
         return self._save_and_close(
             fig,
-            "15_test_residuals",
-            "Test Residuals vs Predicted",
+            filename_stem,
+            title,
             "Scatter Plot",
-            workflow,
+            wf_norm,
             {"residual_mean": res_mean, "residual_std": res_std},
             "test_predictions.csv",
         )
@@ -803,6 +1050,9 @@ class RegressionVisualizer:
     def plot_16_test_residual_histogram(
         self, residuals: np.ndarray, bins: int | None, workflow: str
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(7, 5))
         counts, _bin_edges, _ = ax.hist(
             residuals,
@@ -823,18 +1073,22 @@ class RegressionVisualizer:
             bbox={"boxstyle": "round", "facecolor": "white", "alpha": 0.8},
         )
 
-        ax.set_title("16 Final Test Residual Distribution")
+        title = f"16 {wf_disp}: Final Test Residual Distribution"
+        ax.set_title(title)
         ax.set_xlabel("Residual Value (Actual - Predicted)")
         ax.set_ylabel("Frequency")
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         ax.legend(loc="upper right")
 
+        filename_stem = _workflow_filename(
+            "16", wf_norm, "test_residual_histogram"
+        )
         return self._save_and_close(
             fig,
-            "16_test_residual_histogram",
-            "Test Residual Histogram",
+            filename_stem,
+            title,
             "Histogram",
-            workflow,
+            wf_norm,
             {"bins": len(counts), "residual_mean": res_mean, "residual_std": res_std},
             "test_predictions.csv",
         )
@@ -843,6 +1097,9 @@ class RegressionVisualizer:
     def plot_17_final_metrics(
         self, metrics: EvaluationMetrics, workflow: str
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, (ax1, ax2) = plt.subplots(
             1, 2, figsize=(8, 4), gridspec_kw={"width_ratios": [3, 1]}
         )
@@ -878,25 +1135,38 @@ class RegressionVisualizer:
             edgecolor="black",
             width=0.4,
         )
+        y_min, y_max = self._r_squared_axis_limits(metrics.r_squared)
+        ax2.set_ylim(y_min, y_max)
+        ax2.axhline(0, color="black", linestyle="--", linewidth=1.0)
+
+        offset = 0.02 * (y_max - y_min)
+        if metrics.r_squared < 0:
+            label_y = metrics.r_squared - offset
+            va = "top"
+        else:
+            label_y = metrics.r_squared + offset
+            va = "bottom"
+
         ax2.text(
             bar2[0].get_x() + bar2[0].get_width() / 2,
-            metrics.r_squared + 0.02,
+            label_y,
             f"{metrics.r_squared:.3f}",
             ha="center",
-            va="bottom",
+            va=va,
         )
-        ax2.set_ylim(-0.1, 1.1)
         ax2.set_title("Goodness of Fit")
         ax2.grid(axis="y", linestyle="--", alpha=0.5)
 
-        fig.suptitle("17 Final Test Performance Metrics Summary", fontsize=12)
+        title = f"17 {wf_disp}: Final Test Performance Metrics Summary"
+        fig.suptitle(title, fontsize=12)
 
+        filename_stem = _workflow_filename("17", wf_norm, "final_metrics")
         return self._save_and_close(
             fig,
-            "17_final_metrics",
-            "Final Metrics Summary",
+            filename_stem,
+            title,
             "Bar Chart",
-            workflow,
+            wf_norm,
             {
                 "mse": metrics.mse,
                 "rmse": metrics.rmse,
@@ -910,6 +1180,9 @@ class RegressionVisualizer:
     def plot_18_model_coefficients(
         self, beta: np.ndarray, is_original_basis: bool, workflow: str
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(8, 5))
         degrees = np.arange(len(beta))
         labels = ["Intercept"] + [f"x^{d}" if d > 1 else "x" for d in degrees[1:]]
@@ -934,17 +1207,19 @@ class RegressionVisualizer:
         basis_str = (
             "Original Basis (Unscaled)" if is_original_basis else "Scaled Feature Basis"
         )
-        ax.set_title(f"18 Fitted Polynomial Coefficients ({basis_str})")
+        title = f"18 {wf_disp}: Fitted Polynomial Coefficients ({basis_str})"
+        ax.set_title(title)
         ax.set_xlabel("Polynomial Term")
         ax.set_ylabel("Coefficient Value")
         ax.grid(axis="y", linestyle="--", alpha=0.5)
 
+        filename_stem = _workflow_filename("18", wf_norm, "model_coefficients")
         return self._save_and_close(
             fig,
-            "18_model_coefficients",
-            "Model Coefficients",
+            filename_stem,
+            title,
             "Bar Chart",
-            workflow,
+            wf_norm,
             {"degree": len(beta) - 1, "is_original_basis": is_original_basis},
             "final_model.json",
         )
@@ -957,6 +1232,9 @@ class RegressionVisualizer:
         threshold: float,
         workflow: str,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ax = plt.subplots(figsize=(8, 5))
         ax.plot(
             degrees,
@@ -977,18 +1255,22 @@ class RegressionVisualizer:
         ax.set_xticks(degrees)
         ax.set_xlabel("Polynomial Degree")
         ax.set_ylabel("Condition Number (Log Scale)")
-        ax.set_title("19 Design Matrix Condition Number vs. Degree")
+        title = f"19 {wf_disp}: Design Matrix Condition Number vs. Degree"
+        ax.set_title(title)
         ax.grid(True, which="both", linestyle="--", alpha=0.5)
         ax.legend(loc="best")
 
+        filename_stem = _workflow_filename("19", wf_norm, "condition_numbers")
         return self._save_and_close(
             fig,
-            "19_condition_numbers",
-            "Condition Numbers",
+            filename_stem,
+            title,
             "Line Plot (Log)",
-            workflow,
+            wf_norm,
             {"threshold": threshold, "max_cond": max(cond_numbers)},
-            "holdout_results.csv",
+            "holdout_results.csv"
+            if wf_norm == "holdout"
+            else "kfold_summary_results.csv",
         )
 
     # 20. Combined Results Dashboard
@@ -1008,6 +1290,9 @@ class RegressionVisualizer:
         test_metrics: EvaluationMetrics,
         workflow: str,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+        wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
+
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(12, 10))
 
         # Panel 1: Final Polynomial Fit
@@ -1079,19 +1364,17 @@ class RegressionVisualizer:
         ax4.set_ylabel("Validation RMSE")
         ax4.grid(True, linestyle="--", alpha=0.5)
 
-        fig.suptitle(
-            f"20 Polynomial Regression Dashboard ({workflow.capitalize()} Mode)",
-            fontsize=14,
-            fontweight="bold",
-        )
+        title = f"20 {wf_disp}: Polynomial Regression Dashboard"
+        fig.suptitle(title, fontsize=14, fontweight="bold")
         fig.tight_layout(rect=[0, 0, 1, 0.96])
 
+        filename_stem = _workflow_filename("20", wf_norm, "results_dashboard")
         return self._save_and_close(
             fig,
-            "20_results_dashboard",
-            "Combined Results Dashboard",
+            filename_stem,
+            title,
             "Dashboard (4-panel)",
-            workflow,
+            wf_norm,
             {"degree": best_degree, "l2": best_l2, "test_rmse": test_metrics.rmse},
             "final_model.json",
         )
@@ -1107,6 +1390,8 @@ class RegressionVisualizer:
         workflow: str,
         rmse_extractor: Any,
     ) -> pathlib.Path:
+        wf_norm = workflow.lower().strip()
+
         fig, ax = plt.subplots(figsize=(8, 6))
 
         degrees = sorted({c.degree for c in candidates})
@@ -1172,9 +1457,9 @@ class RegressionVisualizer:
             filename,
             title,
             "Heatmap",
-            workflow,
+            wf_norm,
             {"selected_degree": best_degree, "selected_l2": best_l2},
             "holdout_results.csv"
-            if workflow == "Holdout"
+            if wf_norm == "holdout"
             else "kfold_summary_results.csv",
         )

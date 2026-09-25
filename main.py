@@ -18,7 +18,13 @@ from polynomial_regression.regression import PolynomialRegressor
 from polynomial_regression.reporting import ReportGenerator
 from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
 from polynomial_regression.splitting import DataSplitter, KFoldSplitter
-from polynomial_regression.visualization import RegressionVisualizer
+
+
+def configure_matplotlib_backend(show_plots: bool) -> None:
+    import matplotlib
+
+    if not show_plots:
+        matplotlib.use("Agg", force=True)
 
 
 def _validate_configuration(args: argparse.Namespace) -> None:
@@ -308,7 +314,7 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         "--bootstrap-samples",
         type=int,
         default=0,
-        help="Number of bootstrap samples for uncertainty band (0=disabled).",
+        help="Number of bootstrap resamples used to estimate the fitted-curve uncertainty band; 0 disables the band.",
     )
     parser.add_argument(
         "--bootstrap-seed", type=int, default=123, help="Seed for bootstrap sampling."
@@ -413,6 +419,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
     )
 
     if not args.no_plots:
+        configure_matplotlib_backend(args.show_plots)
+        from polynomial_regression.visualization import RegressionVisualizer
+
         common_visualizer = RegressionVisualizer(
             output_dir=common_dir,
             plot_format=args.plot_format,
@@ -565,7 +574,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     args.bootstrap_seed,
                     args.max_degree,
                 )
-                holdout_visualizer.plot_13b_final_polynomial_bootstrap_band(
+                holdout_visualizer.plot_13b_fitted_curve_uncertainty_band(
                     x_all[split.dev_indices],
                     y_all[split.dev_indices],
                     x_all[split.test_indices],
@@ -773,7 +782,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     args.bootstrap_seed,
                     args.max_degree,
                 )
-                kfold_visualizer.plot_13b_final_polynomial_bootstrap_band(
+                kfold_visualizer.plot_13b_fitted_curve_uncertainty_band(
                     x_all[split.dev_indices],
                     y_all[split.dev_indices],
                     x_all[split.test_indices],
