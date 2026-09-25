@@ -137,7 +137,9 @@ class TestEndToEndCLI(unittest.TestCase):
 
         # Final plots exist simultaneously
         self.assertTrue(
-            (out_dir / "holdout" / "13b_holdout_fitted_curve_uncertainty_band.png").exists()
+            (
+                out_dir / "holdout" / "13b_holdout_fitted_curve_uncertainty_band.png"
+            ).exists()
         )
         self.assertTrue(
             (out_dir / "kfold" / "13b_kfold_fitted_curve_uncertainty_band.png").exists()

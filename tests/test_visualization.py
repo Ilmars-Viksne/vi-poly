@@ -3,16 +3,14 @@
 import pathlib
 import tempfile
 import unittest
+import warnings
 
 import numpy as np
-
-import warnings
 
 from polynomial_regression.metrics import EvaluationMetrics
 from polynomial_regression.reporting import ReportGenerator
 from polynomial_regression.splitting import KFoldSplitter
 from polynomial_regression.visualization import (
-    WORKFLOW_DISPLAY_NAMES,
     RegressionVisualizer,
 )
 
@@ -87,9 +85,7 @@ class TestVisualizationAndReporting(unittest.TestCase):
         visualizer = RegressionVisualizer(self.output_dir, show_plots=False)
 
         # Common plot
-        p1 = visualizer.plot_01_original_data(
-            np.array([1, 2, 3]), np.array([1, 4, 9])
-        )
+        p1 = visualizer.plot_01_original_data(np.array([1, 2, 3]), np.array([1, 4, 9]))
         self.assertEqual(p1.name, "01_original_data.png")
         self.assertNotIn("holdout", p1.name)
         self.assertNotIn("kfold", p1.name)
@@ -99,9 +95,7 @@ class TestVisualizationAndReporting(unittest.TestCase):
         metrics = EvaluationMetrics(mse=1.0, rmse=1.0, mae=1.0, r_squared=0.8)
         p_holdout = visualizer.plot_17_final_metrics(metrics, workflow="holdout")
         self.assertIn("holdout", p_holdout.name)
-        self.assertIn(
-            "Holdout", visualizer.manifest_entries[-1]["plot_title"]
-        )
+        self.assertIn("Holdout", visualizer.manifest_entries[-1]["plot_title"])
 
         p_kfold = visualizer.plot_17_final_metrics(metrics, workflow="kfold")
         self.assertIn("kfold", p_kfold.name)
@@ -142,12 +136,8 @@ class TestVisualizationAndReporting(unittest.TestCase):
             entry["parameters_represented"]["interval_interpretation"],
             "fitted_curve_uncertainty",
         )
-        self.assertEqual(
-            entry["parameters_represented"]["lower_percentile"], 2.5
-        )
-        self.assertEqual(
-            entry["parameters_represented"]["upper_percentile"], 97.5
-        )
+        self.assertEqual(entry["parameters_represented"]["lower_percentile"], 2.5)
+        self.assertEqual(entry["parameters_represented"]["upper_percentile"], 97.5)
 
         # Test deprecated method wrapper
         with warnings.catch_warnings(record=True) as w:
@@ -166,7 +156,9 @@ class TestVisualizationAndReporting(unittest.TestCase):
                 num_bootstraps=100,
                 workflow="holdout",
             )
-            self.assertTrue(any(issubclass(warn.category, DeprecationWarning) for warn in w))
+            self.assertTrue(
+                any(issubclass(warn.category, DeprecationWarning) for warn in w)
+            )
 
     def test_kfold_membership_matrix(self):
         k_splitter = KFoldSplitter(k=5, seed=42)

@@ -5,9 +5,9 @@ import warnings
 from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.colors import ListedColormap
 from matplotlib.patches import Patch
-import numpy as np
 
 from .metrics import EvaluationMetrics
 
@@ -91,7 +91,6 @@ class RegressionVisualizer:
             )
 
         num_folds = len(fold_splits)
-        TRAINING = 0
         VALIDATION = 1
 
         membership = np.zeros((num_folds, development_sample_count), dtype=np.uint8)
@@ -139,16 +138,12 @@ class RegressionVisualizer:
                 )
 
             if len(np.unique(val_arr)) != len(val_arr):
-                raise ValueError(
-                    f"Fold {f_idx} validation indices contain duplicates."
-                )
+                raise ValueError(f"Fold {f_idx} validation indices contain duplicates.")
             if len(np.unique(train_arr)) != len(train_arr):
                 raise ValueError(f"Fold {f_idx} train indices contain duplicates.")
 
             if len(np.intersect1d(val_arr, train_arr)) > 0:
-                raise ValueError(
-                    f"Fold {f_idx} train and validation indices overlap."
-                )
+                raise ValueError(f"Fold {f_idx} train and validation indices overlap.")
 
             if (
                 len(val_arr) + len(train_arr) != development_sample_count
@@ -538,7 +533,7 @@ class RegressionVisualizer:
         )
 
         ax.set_yticks(range(k))
-        ax.set_yticklabels([f"Fold {i+1}" for i in range(k)])
+        ax.set_yticklabels([f"Fold {i + 1}" for i in range(k)])
 
         max_ticks = 10
         tick_positions = np.linspace(
@@ -1080,9 +1075,7 @@ class RegressionVisualizer:
         ax.grid(axis="y", linestyle="--", alpha=0.5)
         ax.legend(loc="upper right")
 
-        filename_stem = _workflow_filename(
-            "16", wf_norm, "test_residual_histogram"
-        )
+        filename_stem = _workflow_filename("16", wf_norm, "test_residual_histogram")
         return self._save_and_close(
             fig,
             filename_stem,
