@@ -55,31 +55,69 @@ class CSVDataLoader:
         skipped_rows: list[tuple[int, str, str]] = []
         invalid_row_errors: list[str] = []
 
+        x_col_norm = self.x_column.strip() if self.x_column else ""
+        if not x_col_norm:
+            raise ValueError("Requested X column name cannot be empty or whitespace-only.")
+
+        y_col_norm = self.y_column.strip() if self.y_column else ""
+        if not y_col_norm:
+            raise ValueError("Requested Y column name cannot be empty or whitespace-only.")
+
         with open(self.filepath, mode="r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
 
-            if reader.fieldnames is None:
+            if reader.fieldnames is None or len(reader.fieldnames) == 0:
                 raise ValueError(
                     f"CSV file '{self.filepath}' is empty or header is missing."
                 )
 
-            fieldnames = [field.strip() if field else "" for field in reader.fieldnames]
+            seen_headers: dict[str, list[str]] = {}
+            normalized_fieldnames: list[str] = []
 
-            if self.x_column not in fieldnames or self.y_column not in fieldnames:
+            for orig in reader.fieldnames:
+                orig_str = orig if orig is not None else ""
+                norm = orig_str.strip()
+                if not norm:
+                    raise ValueError(
+                        f"CSV file '{self.filepath}' contains an empty or whitespace-only column header. "
+                        f"Original headers: {reader.fieldnames}"
+                    )
+                if norm in seen_headers:
+                    seen_headers[norm].append(orig_str)
+                else:
+                    seen_headers[norm] = [orig_str]
+                normalized_fieldnames.append(norm)
+
+            duplicates = {
+                norm: origs for norm, origs in seen_headers.items() if len(origs) > 1
+            }
+            if duplicates:
+                dup_details = ", ".join(
+                    f"'{norm}' (from original: {origs})"
+                    for norm, origs in duplicates.items()
+                )
+                raise ValueError(
+                    f"CSV file '{self.filepath}' contains duplicate normalized column headers: {dup_details}. "
+                    f"Available normalized columns: {list(seen_headers.keys())}"
+                )
+
+            if x_col_norm not in seen_headers or y_col_norm not in seen_headers:
                 missing = []
-                if self.x_column not in fieldnames:
-                    missing.append(self.x_column)
-                if self.y_column not in fieldnames:
-                    missing.append(self.y_column)
+                if x_col_norm not in seen_headers:
+                    missing.append(x_col_norm)
+                if y_col_norm not in seen_headers:
+                    missing.append(y_col_norm)
                 raise ValueError(
                     f"Required column(s) {missing} not found in CSV '{self.filepath}'. "
-                    f"Available columns: {reader.fieldnames}"
+                    f"Available normalized columns: {list(seen_headers.keys())}"
                 )
+
+            reader.fieldnames = normalized_fieldnames
 
             # DictReader uses 1-based line numbers; line 1 is header, so data starts at row 2
             for row_idx, row in enumerate(reader, start=2):
-                x_str = row.get(self.x_column)
-                y_str = row.get(self.y_column)
+                x_str = row.get(x_col_norm)
+                y_str = row.get(y_col_norm)
 
                 val_x, err_x = self._parse_float(x_str)
                 val_y, err_y = self._parse_float(y_str)

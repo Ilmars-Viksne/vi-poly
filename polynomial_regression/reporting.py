@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from .metrics import EvaluationMetrics
+from .regression import ModelFitDetails
 from .selection import HoldoutSelectionResult, KFoldSelectionResult
 
 
@@ -188,8 +189,7 @@ class ReportGenerator:
         beta_orig: np.ndarray,
         transformer: Any,
         test_metrics: EvaluationMetrics,
-        solver_used: str,
-        condition_number: float,
+        fit_details: ModelFitDetails,
         selection_rtol: float,
         selection_atol: float,
     ) -> pathlib.Path:
@@ -211,8 +211,9 @@ class ReportGenerator:
             "coefficients_original_basis": beta_orig.tolist(),
             "scale_features_enabled": transformer.scale_features,
             "scaling_parameters": scaling_params,
-            "solver_used": solver_used,
-            "condition_number": condition_number,
+            "solver_used": fit_details.solver_used,
+            "condition_number": fit_details.condition_number,
+            "condition_warning": fit_details.condition_warning,
             "selection_tolerances": {
                 "rtol": selection_rtol,
                 "atol": selection_atol,
@@ -309,4 +310,34 @@ class ReportGenerator:
         filepath = self.output_dir / "plot_manifest.json"
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(manifest_entries, f, indent=2)
+        return filepath
+
+    def write_comparison(
+        self,
+        holdout_res: HoldoutSelectionResult,
+        kfold_res: KFoldSelectionResult,
+    ) -> pathlib.Path:
+        filepath = self.output_dir / "comparison.json"
+        data = {
+            "mode": "both",
+            "selection_policy": (
+                "Each workflow selects hyperparameters using development data only. "
+                "Test results are reported independently and are not used to select a workflow."
+            ),
+            "workflow_selection": {
+                "holdout": {
+                    "selection_metric": "validation_rmse",
+                    "selected_degree": holdout_res.best_candidate.degree,
+                    "selected_l2_lambda": holdout_res.best_candidate.l2_lambda,
+                },
+                "kfold": {
+                    "selection_metric": "mean_cross_validation_rmse",
+                    "selected_degree": kfold_res.best_candidate.degree,
+                    "selected_l2_lambda": kfold_res.best_candidate.l2_lambda,
+                },
+            },
+            "overall_best_workflow": None,
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
         return filepath
