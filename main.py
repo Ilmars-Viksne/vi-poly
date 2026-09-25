@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 
 from polynomial_regression.data import CSVDataLoader
-from polynomial_regression.features import PolynomialFeatureTransformer
+from polynomial_regression.features import DEFAULT_MAX_DEGREE, PolynomialFeatureTransformer
 from polynomial_regression.metrics import RegressionMetrics
 from polynomial_regression.regression import PolynomialRegressor
 from polynomial_regression.reporting import ReportGenerator
@@ -68,6 +68,12 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
         nargs="+",
         default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
         help="Candidate polynomial degrees.",
+    )
+    parser.add_argument(
+        "--max-degree",
+        type=int,
+        default=DEFAULT_MAX_DEGREE,
+        help=f"Maximum allowed polynomial degree (default: {DEFAULT_MAX_DEGREE}).",
     )
     parser.add_argument(
         "--l2-values",
@@ -163,6 +169,9 @@ def parse_args(args: list[str] | None = None) -> argparse.Namespace:
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
+    if args.max_degree < 0:
+        raise ValueError(f"--max-degree must be >= 0, got {args.max_degree}.")
+
     output_path = pathlib.Path(args.output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -250,6 +259,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             selection_rtol=args.selection_rtol,
             selection_atol=args.selection_atol,
             condition_warning_threshold=args.condition_warning_threshold,
+            max_degree=args.max_degree,
         )
         holdout_res = holdout_selector.select(
             x_all,
@@ -314,7 +324,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             cand_curves = []
             for cd in select_degs:
                 c_trans = PolynomialFeatureTransformer(
-                    degree=cd, scale_features=args.scale_features
+                    degree=cd, scale_features=args.scale_features, max_degree=args.max_degree
                 )
                 X_tr = c_trans.fit_transform(x_all[split.train_indices])
                 c_reg = PolynomialRegressor(l2_lambda=best_l2).fit(
@@ -359,6 +369,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     args.scale_features,
                     args.bootstrap_samples,
                     args.bootstrap_seed,
+                    args.max_degree,
                 )
                 holdout_visualizer.plot_13b_final_polynomial_bootstrap_band(
                     x_all[split.dev_indices],
@@ -455,6 +466,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             selection_rtol=args.selection_rtol,
             selection_atol=args.selection_atol,
             condition_warning_threshold=args.condition_warning_threshold,
+            max_degree=args.max_degree,
         )
         kfold_res = kfold_selector.select(
             x_all, y_all, split.dev_indices, split.test_indices
@@ -480,7 +492,6 @@ def run_pipeline(args: argparse.Namespace) -> None:
             kfold_res.test_residuals,
         )
 
-        # Reconstruct fold assignment array for dev samples
         dev_k_splitter = KFoldSplitter(k=args.folds, seed=args.seed)
         dev_fold_splits = dev_k_splitter.split(np.arange(len(split.dev_indices)))
         dev_fold_nums = np.zeros(len(split.dev_indices), dtype=int)
@@ -564,6 +575,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     args.scale_features,
                     args.bootstrap_samples,
                     args.bootstrap_seed,
+                    args.max_degree,
                 )
                 kfold_visualizer.plot_13b_final_polynomial_bootstrap_band(
                     x_all[split.dev_indices],
@@ -664,6 +676,7 @@ def _compute_bootstrap_bands(
     scale_features: bool,
     num_samples: int,
     seed: int,
+    max_degree: int = DEFAULT_MAX_DEGREE,
 ) -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(seed)
     n = len(x_dev)
@@ -674,7 +687,7 @@ def _compute_bootstrap_bands(
         xb, yb = x_dev[boot_idx], y_dev[boot_idx]
 
         transformer = PolynomialFeatureTransformer(
-            degree=degree, scale_features=scale_features
+            degree=degree, scale_features=scale_features, max_degree=max_degree
         )
         Xb = transformer.fit_transform(xb)
         regressor = PolynomialRegressor(l2_lambda=l2_lambda).fit(Xb, yb)
@@ -727,7 +740,7 @@ def main():
     args = parse_args()
     try:
         run_pipeline(args)
-    except (OSError, RuntimeError, ValueError) as e:
+    except (OSError, RuntimeError, ValueError, FloatingPointError) as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 

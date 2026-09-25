@@ -35,14 +35,17 @@ class DataSplitter:
         test_ratio: float = 0.15,
         seed: int = 42,
     ):
-        self.train_ratio = train_ratio
-        self.val_ratio = val_ratio
-        self.test_ratio = test_ratio
-        self.seed = seed
+        self.train_ratio = float(train_ratio)
+        self.val_ratio = float(val_ratio)
+        self.test_ratio = float(test_ratio)
+        self.seed = int(seed)
 
         self._validate_ratios()
 
     def _validate_ratios(self) -> None:
+        if not (np.isfinite(self.train_ratio) and np.isfinite(self.val_ratio) and np.isfinite(self.test_ratio)):
+            raise ValueError("Split ratios must be finite numbers.")
+
         if self.train_ratio <= 0 or self.val_ratio <= 0 or self.test_ratio <= 0:
             raise ValueError(
                 f"All split ratios must be positive (> 0). Got: "
@@ -64,20 +67,18 @@ class DataSplitter:
         Returns:
             HoldoutSplit with shuffled train, validation, test, and dev indices.
         """
-        if num_samples < 3:
+        if not isinstance(num_samples, (int, np.integer)) or num_samples < 3:
             raise ValueError(
-                f"Number of samples ({num_samples}) is too small for train-val-test split."
+                f"Number of samples ({num_samples}) is too small or invalid for train-val-test split."
             )
 
         rng = np.random.default_rng(self.seed)
         shuffled_indices = rng.permutation(num_samples)
 
-        # Allocate sizes
         num_test = round(num_samples * self.test_ratio)
         num_val = round(num_samples * self.val_ratio)
         num_train = num_samples - num_test - num_val
 
-        # Ensure no split is empty
         if num_train < 1 or num_val < 1 or num_test < 1:
             raise ValueError(
                 f"Sample size {num_samples} is too small to populate all splits with ratios "
@@ -85,15 +86,12 @@ class DataSplitter:
                 f"Calculated counts: train={num_train}, val={num_val}, test={num_test}."
             )
 
-        # Split shuffled indices
         train_idx = shuffled_indices[:num_train]
         val_idx = shuffled_indices[num_train : num_train + num_val]
         test_idx = shuffled_indices[num_train + num_val :]
 
-        # Development set is train + val combined
         dev_idx = shuffled_indices[: num_train + num_val]
 
-        # Verification checks
         assert len(train_idx) + len(val_idx) + len(test_idx) == num_samples
         assert len(set(train_idx).intersection(set(val_idx))) == 0
         assert len(set(train_idx).intersection(set(test_idx))) == 0
@@ -123,16 +121,31 @@ class KFoldSplitter:
         Returns:
             List of FoldSplit objects, one per fold.
         """
-        num_samples = len(dev_indices)
-        if self.k < 2:
-            raise ValueError(f"Number of folds K must be >= 2, got {self.k}.")
+        if not isinstance(self.k, (int, np.integer)) or self.k < 2:
+            raise ValueError(f"Number of folds K must be an integer >= 2, got {self.k}.")
+
+        try:
+            dev_arr = np.asarray(dev_indices, dtype=np.int64)
+        except (ValueError, TypeError) as exc:
+            raise ValueError("dev_indices must be integer array.") from exc
+
+        if dev_arr.ndim != 1:
+            raise ValueError(f"dev_indices must be a 1D array; received shape {dev_arr.shape}.")
+
+        if dev_arr.size == 0:
+            raise ValueError("dev_indices must not be empty.")
+
+        if len(set(dev_arr)) != len(dev_arr):
+            raise ValueError("dev_indices must not contain duplicate values.")
+
+        num_samples = len(dev_arr)
         if self.k > num_samples:
             raise ValueError(
                 f"Number of folds K ({self.k}) cannot exceed number of development samples ({num_samples})."
             )
 
         rng = np.random.default_rng(self.seed)
-        shuffled_dev = rng.permutation(dev_indices)
+        shuffled_dev = rng.permutation(dev_arr)
 
         base_size = num_samples // self.k
         remainder = num_samples % self.k
@@ -154,7 +167,6 @@ class KFoldSplitter:
                 np.concatenate(train_folds) if train_folds else np.array([], dtype=int)
             )
 
-            # Verification assertions
             assert len(set(train_idx).intersection(set(val_idx))) == 0
             assert len(train_idx) + len(val_idx) == num_samples
 

@@ -190,18 +190,24 @@ class TestEndToEndCLI(unittest.TestCase):
         self.assertIn("solver_used", data)
         self.assertIn("condition_number", data)
         self.assertIn("condition_warning", data)
-        self.assertEqual(data["solver_used"], "solve")
+        self.assertEqual(data["solver_used"], "lstsq_ols")
+        self.assertIn("rank", data)
+        self.assertIn("full_rank", data)
+        self.assertIn("design_condition_number", data)
+        self.assertIn("solver_condition_number", data)
         self.assertIsInstance(data["condition_number"], float)
         self.assertIsInstance(data["condition_warning"], bool)
+        self.assertIsInstance(data["rank"], int)
+        self.assertIsInstance(data["full_rank"], bool)
 
-    @pytest.mark.filterwarnings("ignore:Design matrix condition number.*:UserWarning")
+    @pytest.mark.filterwarnings("ignore:Design matrix solver system is rank deficient.*:UserWarning")
+    @pytest.mark.filterwarnings("ignore:Solver matrix condition number.*:UserWarning")
     def test_solver_fallback_and_metadata(self):
-        # Construct rank-deficient design matrix with identical columns to force singular matrix in solver
         X_singular = np.ones((10, 3), dtype=np.float64)
         y = np.ones(10, dtype=np.float64)
 
         regressor = PolynomialRegressor(l2_lambda=0.0).fit(X_singular, y)
-        self.assertEqual(regressor.fit_details.solver_used, "lstsq")
+        self.assertEqual(regressor.fit_details.solver_used, "lstsq_ols")
 
     def test_neutral_workflow_selection(self):
         out_dir = self.temp_path / "results_neutral"

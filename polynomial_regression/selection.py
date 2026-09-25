@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .features import PolynomialFeatureTransformer
+from .features import DEFAULT_MAX_DEGREE, PolynomialFeatureTransformer
 from .metrics import EvaluationMetrics, RegressionMetrics
 from .regression import ModelFitDetails, PolynomialRegressor
 from .splitting import KFoldSplitter
@@ -79,6 +79,53 @@ class KFoldSelectionResult:
     oof_residuals: np.ndarray
 
 
+def _validate_hyperparameters(
+    degrees: list[int], l2_lambdas: list[float], max_degree: int
+) -> tuple[list[int], list[float]]:
+    if not degrees:
+        raise ValueError("Candidate degrees list must not be empty.")
+    if not l2_lambdas:
+        raise ValueError("Candidate L2 lambdas list must not be empty.")
+
+    validated_degrees = []
+    for deg in degrees:
+        if not isinstance(deg, (int, np.integer)):
+            raise ValueError(f"Degree values must be integers, got {type(deg)}.")
+        d_int = int(deg)
+        if d_int < 0 or d_int > max_degree:
+            raise ValueError(f"Polynomial degree {d_int} is outside allowed range [0, {max_degree}].")
+        validated_degrees.append(d_int)
+
+    validated_l2 = []
+    for l2 in l2_lambdas:
+        try:
+            l2_val = float(l2)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"L2 lambda must be numeric, got {l2}.") from exc
+        if not np.isfinite(l2_val) or l2_val < 0.0:
+            raise ValueError(f"L2 lambda must be finite and non-negative, got {l2_val}.")
+        validated_l2.append(l2_val)
+
+    return sorted(list(set(validated_degrees))), list(dict.fromkeys(validated_l2))
+
+
+def _validate_index_array(idx: np.ndarray, name: str, n_all: int) -> np.ndarray:
+    try:
+        arr = np.asarray(idx, dtype=np.int64)
+    except (ValueError, TypeError) as exc:
+        raise ValueError(f"Index array '{name}' must be integer array.") from exc
+
+    if arr.ndim != 1:
+        raise ValueError(f"Index array '{name}' must be 1D, got shape {arr.shape}.")
+    if arr.size == 0:
+        raise ValueError(f"Index array '{name}' must not be empty.")
+    if np.any(arr < 0) or np.any(arr >= n_all):
+        raise ValueError(f"Index array '{name}' contains out-of-bounds indices for sample size {n_all}.")
+    if len(set(arr)) != len(arr):
+        raise ValueError(f"Index array '{name}' contains duplicate indices.")
+    return arr
+
+
 class HoldoutModelSelector:
     """Evaluates candidate models on holdout train/val sets and refits on dev set."""
 
@@ -90,13 +137,14 @@ class HoldoutModelSelector:
         selection_rtol: float = 1e-7,
         selection_atol: float = 1e-12,
         condition_warning_threshold: float = 1e12,
+        max_degree: int = DEFAULT_MAX_DEGREE,
     ):
-        self.degrees = sorted(degrees)
-        self.l2_lambdas = l2_lambdas
+        self.max_degree = int(max_degree)
+        self.degrees, self.l2_lambdas = _validate_hyperparameters(degrees, l2_lambdas, self.max_degree)
         self.scale_features = scale_features
-        self.selection_rtol = selection_rtol
-        self.selection_atol = selection_atol
-        self.condition_warning_threshold = condition_warning_threshold
+        self.selection_rtol = float(selection_rtol)
+        self.selection_atol = float(selection_atol)
+        self.condition_warning_threshold = float(condition_warning_threshold)
 
     def select(
         self,
@@ -107,23 +155,36 @@ class HoldoutModelSelector:
         test_idx: np.ndarray,
         dev_idx: np.ndarray,
     ) -> HoldoutSelectionResult:
-        x_train, y_train = x_all[train_idx], y_all[train_idx]
-        x_val, y_val = x_all[val_idx], y_all[val_idx]
-        x_test, y_test = x_all[test_idx], y_all[test_idx]
-        x_dev, y_dev = x_all[dev_idx], y_all[dev_idx]
+        n_all = len(x_all)
+        tr_idx = _validate_index_array(train_idx, "train_idx", n_all)
+        v_idx = _validate_index_array(val_idx, "val_idx", n_all)
+        te_idx = _validate_index_array(test_idx, "test_idx", n_all)
+        d_idx = _validate_index_array(dev_idx, "dev_idx", n_all)
+
+        if len(set(tr_idx).intersection(set(v_idx))) > 0:
+            raise ValueError("train_idx and val_idx must not overlap.")
+        if len(set(tr_idx).intersection(set(te_idx))) > 0:
+            raise ValueError("train_idx and test_idx must not overlap.")
+        if len(set(v_idx).intersection(set(te_idx))) > 0:
+            raise ValueError("val_idx and test_idx must not overlap.")
+
+        x_train, y_train = x_all[tr_idx], y_all[tr_idx]
+        x_val, y_val = x_all[v_idx], y_all[v_idx]
+        x_test, y_test = x_all[te_idx], y_all[te_idx]
+        x_dev, y_dev = x_all[d_idx], y_all[d_idx]
 
         candidates: list[ModelCandidateResult] = []
 
         for deg in self.degrees:
             for l2 in self.l2_lambdas:
-                # 1. Transform features (fit scaling parameters on TRAIN only)
                 transformer = PolynomialFeatureTransformer(
-                    degree=deg, scale_features=self.scale_features
+                    degree=deg,
+                    scale_features=self.scale_features,
+                    max_degree=self.max_degree,
                 )
                 X_train = transformer.fit_transform(x_train)
                 X_val = transformer.transform(x_val)
 
-                # 2. Fit model on TRAIN set only
                 regressor = PolynomialRegressor(
                     l2_lambda=l2,
                     condition_warning_threshold=self.condition_warning_threshold,
@@ -134,7 +195,6 @@ class HoldoutModelSelector:
                     beta_scaled
                 )
 
-                # 3. Evaluate on TRAIN and VAL
                 pred_train = regressor.predict(X_train)
                 pred_val = regressor.predict(X_val)
 
@@ -160,12 +220,12 @@ class HoldoutModelSelector:
                     )
                 )
 
-        # 4. Select best candidate model with tie-breaking rules
         best_candidate = self._select_best_candidate(candidates)
 
-        # 5. Refit selected model on combined DEVELOPMENT data (train + val)
         refitted_transformer = PolynomialFeatureTransformer(
-            degree=best_candidate.degree, scale_features=self.scale_features
+            degree=best_candidate.degree,
+            scale_features=self.scale_features,
+            max_degree=self.max_degree,
         )
         X_dev = refitted_transformer.fit_transform(x_dev)
         refitted_regressor = PolynomialRegressor(
@@ -178,18 +238,16 @@ class HoldoutModelSelector:
             final_beta_scaled
         )
 
-        # Verify coefficient conversion
         PolynomialFeatureTransformer.verify_coefficient_conversion(
             x_dev, refitted_transformer, final_beta_scaled, final_beta_orig
         )
 
-        # 6. Evaluate once on untouched TEST set
         X_test = refitted_transformer.transform(x_test)
         test_pred = refitted_regressor.predict(X_test)
         test_metrics = RegressionMetrics.calculate(
             y_test, test_pred, num_predictors=best_candidate.degree
         )
-        test_residuals = y_test - test_pred  # actual - predicted
+        test_residuals = y_test - test_pred
 
         return HoldoutSelectionResult(
             candidates=candidates,
@@ -214,15 +272,12 @@ class HoldoutModelSelector:
             if np.isclose(
                 cand_rmse, best_rmse, rtol=self.selection_rtol, atol=self.selection_atol
             ):
-                # Tie-breaking logic:
-                # 1. Lower polynomial degree
                 if candidate.degree < best.degree:
                     best = candidate
                 elif (
                     candidate.degree == best.degree
                     and candidate.l2_lambda > best.l2_lambda
                 ):
-                    # 2. Larger L2 regularization strength
                     best = candidate
             elif cand_rmse < best_rmse:
                 best = candidate
@@ -243,15 +298,16 @@ class KFoldModelSelector:
         selection_rtol: float = 1e-7,
         selection_atol: float = 1e-12,
         condition_warning_threshold: float = 1e12,
+        max_degree: int = DEFAULT_MAX_DEGREE,
     ):
-        self.degrees = sorted(degrees)
-        self.l2_lambdas = l2_lambdas
-        self.k_folds = k_folds
-        self.seed = seed
+        self.max_degree = int(max_degree)
+        self.degrees, self.l2_lambdas = _validate_hyperparameters(degrees, l2_lambdas, self.max_degree)
+        self.k_folds = int(k_folds)
+        self.seed = int(seed)
         self.scale_features = scale_features
-        self.selection_rtol = selection_rtol
-        self.selection_atol = selection_atol
-        self.condition_warning_threshold = condition_warning_threshold
+        self.selection_rtol = float(selection_rtol)
+        self.selection_atol = float(selection_atol)
+        self.condition_warning_threshold = float(condition_warning_threshold)
 
     def select(
         self,
@@ -260,20 +316,25 @@ class KFoldModelSelector:
         dev_idx: np.ndarray,
         test_idx: np.ndarray,
     ) -> KFoldSelectionResult:
-        x_dev, y_dev = x_all[dev_idx], y_all[dev_idx]
-        x_test, y_test = x_all[test_idx], y_all[test_idx]
+        n_all = len(x_all)
+        d_idx = _validate_index_array(dev_idx, "dev_idx", n_all)
+        te_idx = _validate_index_array(test_idx, "test_idx", n_all)
 
-        # 1. Create fold splits on dev_indices
+        if len(set(d_idx).intersection(set(te_idx))) > 0:
+            raise ValueError("dev_idx and test_idx must not overlap.")
+
+        x_dev, y_dev = x_all[d_idx], y_all[d_idx]
+        x_test, y_test = x_all[te_idx], y_all[te_idx]
+
         splitter = KFoldSplitter(k=self.k_folds, seed=self.seed)
-        # Pass 0..len(dev_idx)-1 for internal fold splitting
-        folds = splitter.split(np.arange(len(dev_idx)))
+        folds = splitter.split(np.arange(len(d_idx)))
 
         candidates: list[KFoldCandidateResult] = []
 
         for deg in self.degrees:
             for l2 in self.l2_lambdas:
                 fold_results: list[FoldMetricsResult] = []
-                oof_preds = np.zeros(len(dev_idx), dtype=np.float64)
+                oof_preds = np.zeros(len(d_idx), dtype=np.float64)
 
                 fold_mses, fold_rmses, fold_maes, fold_r2s = [], [], [], []
                 cond_nums = []
@@ -285,9 +346,10 @@ class KFoldModelSelector:
                     xf_train, yf_train = x_dev[f_train_idx], y_dev[f_train_idx]
                     xf_val, yf_val = x_dev[f_val_idx], y_dev[f_val_idx]
 
-                    # Fit scaling parameters inside fold training partition ONLY
                     transformer = PolynomialFeatureTransformer(
-                        degree=deg, scale_features=self.scale_features
+                        degree=deg,
+                        scale_features=self.scale_features,
+                        max_degree=self.max_degree,
                     )
                     Xf_train = transformer.fit_transform(xf_train)
                     Xf_val = transformer.transform(xf_val)
@@ -326,7 +388,6 @@ class KFoldModelSelector:
                     fold_maes.append(f_val_metrics.mae)
                     fold_r2s.append(f_val_metrics.r_squared)
 
-                # Mean and std across folds
                 mean_val_metrics = EvaluationMetrics(
                     mse=float(np.mean(fold_mses)),
                     rmse=float(np.mean(fold_rmses)),
@@ -352,12 +413,12 @@ class KFoldModelSelector:
                     )
                 )
 
-        # 2. Select best hyperparameter combination
         best_candidate = self._select_best_candidate(candidates)
 
-        # 3. Refit selected model on full DEVELOPMENT set
         refitted_transformer = PolynomialFeatureTransformer(
-            degree=best_candidate.degree, scale_features=self.scale_features
+            degree=best_candidate.degree,
+            scale_features=self.scale_features,
+            max_degree=self.max_degree,
         )
         X_dev = refitted_transformer.fit_transform(x_dev)
         refitted_regressor = PolynomialRegressor(
@@ -374,7 +435,6 @@ class KFoldModelSelector:
             x_dev, refitted_transformer, final_beta_scaled, final_beta_orig
         )
 
-        # 4. Evaluate on untouched TEST set
         X_test = refitted_transformer.transform(x_test)
         test_pred = refitted_regressor.predict(X_test)
         test_metrics = RegressionMetrics.calculate(

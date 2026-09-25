@@ -17,7 +17,7 @@ K-Fold cross-validation provides a robust out-of-fold estimate of validation err
 
 ---
 
-## Mathematical Formulation
+## Mathematical Formulation & Least-Squares Solvers
 
 ### Polynomial Regression Equation
 For a scalar feature $x$, polynomial regression models the target $y$ as:
@@ -45,7 +45,7 @@ When `--scale-features` is enabled, every non-intercept column $p \ge 1$ is stan
 
 $$z_{i, p} = \frac{x_i^p - \mu_p}{\sigma_p}$$
 
-The intercept column $x^0 = 1$ is left unscaled. Standardizing polynomial terms prevents ill-conditioning of the Vandermonde matrix as degree $d$ increases.
+The intercept column $x^0 = 1$ is left unscaled. Standardizing polynomial terms prevents ill-conditioning of the Vandermonde matrix as degree $d$ increases. Note that feature scaling is applied **after** calculating polynomial powers, so scaling itself does not prevent floating-point overflow during initial power construction.
 
 #### Prevention of Data Leakage
 - In Holdout mode, feature scaling parameters ($\mu_p, \sigma_p$) are calculated from the **Training Set only**.
@@ -62,19 +62,60 @@ $$\beta^{\text{orig}}_0 = \beta^{\text{scaled}}_0 - \sum_{p=1}^d \frac{\beta^{\t
 
 This conversion is verified numerically using `np.allclose(pred_scaled, pred_orig, rtol=1e-10, atol=1e-12)`.
 
-### L2 Regularization (Ridge) Objective
-The coefficients $\boldsymbol{\beta}$ are obtained by solving the regularized normal equations:
+---
 
-$$(\mathbf{X}^T \mathbf{X} + \lambda \mathbf{R}) \boldsymbol{\beta} = \mathbf{X}^T \mathbf{y}$$
+## Least-Squares Formulations & Numerical Stability
 
-where $\mathbf{R} = \text{diag}(0, 1, 1, \dots, 1)$. **The intercept $\beta_0$ is unregularized** ($R_{00} = 0$) so that shifting the mean of $y$ does not distort penalty calculations.
+To avoid the loss of precision associated with forming normal equations ($\mathbf{X}^T \mathbf{X}$), all regression models are solved directly using singular value decomposition or QR factorization via `np.linalg.lstsq`.
+
+### Ordinary Least Squares (OLS)
+When $\lambda = 0.0$, the model parameters $\boldsymbol{\beta}$ are solved directly from the original system:
+
+$$\boldsymbol{\beta}, \text{residuals}, \text{rank}, \text{singular\_values} = \text{np.linalg.lstsq}(\mathbf{X}, \mathbf{y}, \text{rcond}=\text{None})$$
+
+- **Solver Label**: `lstsq_ols`
+- **Normal Equations**: Not formed or solved.
+- **Rank Deficient Handling**: `np.linalg.lstsq` returns the minimum-norm solution for rank-deficient systems and issues a `UserWarning`.
+
+### L2 Regularization (Ridge) via Augmented System
+When $\lambda > 0.0$, Ridge regression is solved using an augmented least-squares formulation:
+
+$$\mathbf{X}_{\text{aug}} = \begin{bmatrix} \mathbf{X} \\ \sqrt{\lambda} \mathbf{L} \end{bmatrix}, \quad \mathbf{y}_{\text{aug}} = \begin{bmatrix} \mathbf{y} \\ \mathbf{0}_{p+1} \end{bmatrix}$$
+
+$$\boldsymbol{\beta} = \text{np.linalg.lstsq}(\mathbf{X}_{\text{aug}}, \mathbf{y}_{\text{aug}}, \text{rcond}=\text{None})[0]$$
+
+where $\mathbf{L} = \text{diag}(0, 1, 1, \dots, 1)$. **The intercept $\beta_0$ is explicitly excluded from regularization** ($L_{00} = 0$).
+
+- **Solver Label**: `lstsq_augmented_ridge`
+- **Normal Equations**: Neither $\mathbf{X}^T \mathbf{X} + \lambda \mathbf{R}$ nor `np.linalg.solve` is used.
+
+### Condition Number & Solver Diagnostics
+`ModelFitDetails` records comprehensive numerical diagnostics for the final model refit:
+- `design_condition_number`: Condition number of the original polynomial design matrix $\mathbf{X}$.
+- `solver_condition_number`: Condition number of the matrix actually passed to `np.linalg.lstsq` ($\mathbf{X}$ for OLS, $\mathbf{X}_{\text{aug}}$ for Ridge).
+- `condition_number`: Alias for `solver_condition_number` for backward compatibility.
+- `rank` & `full_rank`: Effective rank and full-rank status returned by the solver.
+
+---
+
+## Input Validation & Overflow Protection
+
+### Degree Policy
+- Configurable maximum polynomial degree limit `--max-degree` (default: 50).
+- Configured degree $d$ must satisfy $0 \le d \le \text{max\_degree}$.
+- Degrees exceeding `--max-degree` raise a clear `ValueError`.
+
+### Power Construction Guards
+1. **Logarithmic Preflight Check**: Before calculating powers, $\text{degree} \cdot \log(\max |x|)$ is compared against $\log(\text{float64\_max})$ to catch overflow before execution.
+2. **Guarded Multiplication**: Features are generated iteratively ($x^p = x^{p-1} \cdot x$) inside NumPy error states (`np.errstate(over="raise")`).
+3. **Finite Array Enforcement**: All numerical arrays (`x`, `X`, `y`, predictions, converted coefficients) are strictly validated for finiteness, non-emptiness, and dimension constraints. Non-finite values or computational overflows raise `FloatingPointError`.
 
 ---
 
 ## Residual Conventions & Diagnostics
 
 - **Residual Definition**: Residual is defined consistently as $\text{residual} = y_{\text{actual}} - y_{\text{predicted}}$.
-- **Diagnostic Usage**: Residual vs. Predicted plots and Residual Histograms serve as visual diagnostic tools to inspect homoscedasticity, non-linearity, and outlier influence. They assist in diagnosing model inadequacy rather than acting as definitive formal statistical tests.
+- **Diagnostic Usage**: Residual vs. Predicted plots and Residual Histograms serve as visual diagnostic tools to inspect homoscedasticity, non-linearity, and outlier influence.
 
 ---
 
@@ -124,6 +165,7 @@ python main.py polynomial_data.csv \
     --validation-ratio 0.15 \
     --test-ratio 0.15 \
     --degrees 1 2 3 4 5 6 7 8 9 10 \
+    --max-degree 50 \
     --l2-values 0 0.0001 0.01 0.1 1 10 \
     --folds 5 \
     --seed 42 \
@@ -132,13 +174,6 @@ python main.py polynomial_data.csv \
     --plot-format png \
     --plot-dpi 150 \
     --output-dir results
-```
-
-### Headless Execution
-To run in a headless environment (e.g. CI/CD or server without display), use `--no-plots` or standard execution (which defaults to non-interactive Matplotlib `Agg` backend unless `--show-plots` is set):
-
-```bash
-python main.py polynomial_data.csv --mode both --output-dir results
 ```
 
 ---
@@ -178,37 +213,36 @@ Numerical results and visual artifacts are written to `--output-dir` in workflow
 - In `--mode kfold`, only `common/` and `kfold/` are created.
 - `comparison.json` is generated only when `--mode both` is selected.
 
-### Numerical Results & Manifests
-1. `common/split_summary.json`: Split proportions, sample counts, row indices, fold memberships, and skipped row details.
-2. `holdout/holdout_results.csv`: Per-candidate train and validation MSE, RMSE, MAE, R², and condition numbers.
-3. `kfold/kfold_fold_results.csv`: Per-fold train and validation metrics across folds.
-4. `kfold/kfold_summary_results.csv`: Mean and standard deviation of validation metrics across folds.
-5. `<workflow>/final_model.json`: Selected degree, L2 strength, scaled & original-basis coefficients, scaling statistics, solver used, condition number, condition warning, and final test metrics.
-6. `<workflow>/test_predictions.csv`: Original CSV row index, X, actual Y, predicted Y, and residual on untouched test set.
-7. `kfold/out_of_fold_predictions.csv`: Cross-validated out-of-fold predictions for development data.
-8. `<dir>/plot_manifest.json`: Manifest recording every figure generated in that directory.
-9. `comparison.json`: Neutral comparison summary when running `--mode both`.
+### Final Model Metadata Schema (`final_model.json`)
+The `final_model.json` artifact includes full numerical details from the final refit:
 
-### Visual Outputs
-- `common/01_original_data.png`: Input scatter plot before splitting.
-- `common/02_data_splits.png`: Scatter plot showing train, validation, and test subsets.
-- `common/03_split_sizes.png`: Bar chart summarizing subset sample allocation.
-- `holdout/04_holdout_validation_rmse.png`: Validation RMSE curves across candidate degrees and L2 values.
-- `holdout/05_train_validation_error.png`: Bias-variance trade-off curves for selected L2 value.
-- `holdout/06_holdout_rmse_heatmap.png`: Validation RMSE heatmap.
-- `holdout/07_candidate_models.png`: Fitted polynomial curves for representative degrees on training data.
-- `kfold/08_kfold_assignments.png`: Validation fold membership matrix.
-- `kfold/09_kfold_mean_rmse.png`: Cross-validation mean RMSE with error bars.
-- `kfold/10_kfold_rmse_heatmap.png`: Cross-validation mean RMSE heatmap.
-- `kfold/10b_kfold_rmse_std_heatmap.png`: Cross-validation RMSE standard deviation heatmap.
-- `kfold/11_fold_metrics.png`: Per-fold validation RMSE bar chart.
-- `kfold/12_out_of_fold_predictions.png`: Out-of-fold actual vs. predicted scatter plot.
-- `<workflow>/13_final_polynomial_fit.png`: Final polynomial curve fitted on development data against test points.
-- `<workflow>/13b_final_polynomial_bootstrap_band.png` (Optional): Bootstrap model-fit uncertainty band.
-- `<workflow>/14_test_actual_vs_predicted.png`: Final test actual vs. predicted scatter plot.
-- `<workflow>/15_test_residuals.png`: Residual vs. predicted diagnostic scatter plot.
-- `<workflow>/16_test_residual_histogram.png`: Residual distribution histogram.
-- `<workflow>/17_final_metrics.png`: Clean summary bar chart of final test performance metrics.
-- `<workflow>/18_model_coefficients.png`: Fitted polynomial coefficients bar chart.
-- `<workflow>/19_condition_numbers.png`: Design matrix condition number vs. degree.
-- `<workflow>/20_results_dashboard.png`: Presentation-ready 4-panel summary dashboard.
+```json
+{
+  "selected_workflow": "holdout",
+  "selected_degree": 2,
+  "selected_l2_lambda": 0.0,
+  "coefficients_ordering_convention": "Ascending polynomial order: [beta_0, beta_1*x, beta_2*x^2, ...]",
+  "coefficients_scaled_basis": [2.0, -1.0, 0.5],
+  "coefficients_original_basis": [2.0, -1.0, 0.5],
+  "scale_features_enabled": false,
+  "scaling_parameters": null,
+  "solver_used": "lstsq_ols",
+  "condition_number": 234.56,
+  "condition_warning": false,
+  "rank": 3,
+  "full_rank": true,
+  "design_condition_number": 234.56,
+  "solver_condition_number": 234.56,
+  "selection_tolerances": {
+    "rtol": 1e-07,
+    "atol": 1e-12
+  },
+  "final_test_metrics": {
+    "mse": 0.042,
+    "rmse": 0.205,
+    "mae": 0.162,
+    "r_squared": 0.998,
+    "adjusted_r_squared": 0.998
+  }
+}
+```
