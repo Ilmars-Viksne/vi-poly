@@ -18,7 +18,6 @@ from .regression import (
     DEFAULT_L1_MAX_ITERATIONS,
     DEFAULT_L1_TOLERANCE,
     REGULARIZATION_L2,
-    REGULARIZATION_NONE,
     ModelFitDetails,
 )
 from .selection import HoldoutSelectionResult, KFoldSelectionResult

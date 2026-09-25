@@ -389,7 +389,9 @@ class RegressionVisualizer:
 
         # Mark selected
         sel_cand = next(
-            c for c in candidates if c.degree == best_degree and c.regularization_strength == best_strength
+            c
+            for c in candidates
+            if c.degree == best_degree and c.regularization_strength == best_strength
         )
         sel_label = f"Selected (deg={best_degree}, {_format_reg_title_fragment(reg_type, best_strength)})"
         ax.plot(
@@ -416,7 +418,11 @@ class RegressionVisualizer:
             title,
             "Line Plot",
             wf_norm,
-            {"selected_degree": best_degree, "selected_regularization_strength": best_strength, "regularization": reg_type},
+            {
+                "selected_degree": best_degree,
+                "selected_regularization_strength": best_strength,
+                "regularization": reg_type,
+            },
             "holdout_results.csv",
         )
 
@@ -434,7 +440,9 @@ class RegressionVisualizer:
         wf_disp = WORKFLOW_DISPLAY_NAMES[wf_norm]
 
         fig, ax = plt.subplots(figsize=(8, 5))
-        cands_str = [c for c in candidates if c.regularization_strength == selected_strength]
+        cands_str = [
+            c for c in candidates if c.regularization_strength == selected_strength
+        ]
         cands_str.sort(key=lambda c: c.degree)
         reg_type = candidates[0].regularization if candidates else "l2"
 
@@ -470,7 +478,11 @@ class RegressionVisualizer:
             title,
             "Line Plot",
             wf_norm,
-            {"regularization_strength": selected_strength, "selected_degree": best_degree, "regularization": reg_type},
+            {
+                "regularization_strength": selected_strength,
+                "selected_degree": best_degree,
+                "regularization": reg_type,
+            },
             "holdout_results.csv",
         )
 
@@ -528,7 +540,9 @@ class RegressionVisualizer:
         )
 
         for deg, str_val, x_grid, y_grid in candidate_curves:
-            ax.plot(x_grid, y_grid, linewidth=2, label=f"Degree {deg}, Strength={str_val}")
+            ax.plot(
+                x_grid, y_grid, linewidth=2, label=f"Degree {deg}, Strength={str_val}"
+            )
 
         title = f"07 {wf_disp}: Candidate Polynomial Models Comparison"
         ax.set_title(title)
@@ -653,7 +667,9 @@ class RegressionVisualizer:
 
         # Mark selected
         sel_cand = next(
-            c for c in candidates if c.degree == best_degree and c.regularization_strength == best_strength
+            c
+            for c in candidates
+            if c.degree == best_degree and c.regularization_strength == best_strength
         )
         sel_label = f"Selected (deg={best_degree}, {_format_reg_title_fragment(reg_type, best_strength)})"
         ax.plot(
@@ -680,7 +696,11 @@ class RegressionVisualizer:
             title,
             "Errorbar Plot",
             wf_norm,
-            {"selected_degree": best_degree, "selected_regularization_strength": best_strength, "regularization": reg_type},
+            {
+                "selected_degree": best_degree,
+                "selected_regularization_strength": best_strength,
+                "regularization": reg_type,
+            },
             "kfold_summary_results.csv",
         )
 
@@ -794,7 +814,12 @@ class RegressionVisualizer:
             title,
             "Bar Chart",
             wf_norm,
-            {"degree": degree, "regularization_strength": strength, "regularization": regularization, "mean_rmse": mean_rmse},
+            {
+                "degree": degree,
+                "regularization_strength": strength,
+                "regularization": regularization,
+                "mean_rmse": mean_rmse,
+            },
             "kfold_fold_results.csv",
         )
 
@@ -1361,7 +1386,11 @@ class RegressionVisualizer:
             title,
             "Line Plot (Log)",
             wf_norm,
-            {"threshold": threshold, "max_cond": max(cond_numbers), "regularization": regularization},
+            {
+                "threshold": threshold,
+                "max_cond": max(cond_numbers),
+                "regularization": regularization,
+            },
             "holdout_results.csv"
             if wf_norm == "holdout"
             else "kfold_summary_results.csv",
@@ -1449,7 +1478,9 @@ class RegressionVisualizer:
         ax3.grid(True, linestyle="--", alpha=0.5)
 
         # Panel 4: Model Selection Curve
-        cands_str = [c for c in candidates if c.regularization_strength == best_strength]
+        cands_str = [
+            c for c in candidates if c.regularization_strength == best_strength
+        ]
         cands_str.sort(key=lambda c: c.degree)
         degs = [c.degree for c in cands_str]
 
@@ -1476,7 +1507,12 @@ class RegressionVisualizer:
             title,
             "Dashboard (4-panel)",
             wf_norm,
-            {"degree": best_degree, "regularization_strength": best_strength, "regularization": reg_type, "test_rmse": rmse_val},
+            {
+                "degree": best_degree,
+                "regularization_strength": best_strength,
+                "regularization": reg_type,
+                "test_rmse": rmse_val,
+            },
             "final_model.json",
         )
 
@@ -1507,7 +1543,9 @@ class RegressionVisualizer:
         for i, str_val in enumerate(strengths):
             for j, deg in enumerate(degrees):
                 cand = next(
-                    c for c in candidates if c.degree == deg and c.regularization_strength == str_val
+                    c
+                    for c in candidates
+                    if c.degree == deg and c.regularization_strength == str_val
                 )
                 heatmap_data[i, j] = rmse_extractor(cand)
 
@@ -1537,7 +1575,9 @@ class RegressionVisualizer:
         ax.set_yticks(np.arange(len(strengths)))
 
         ax.set_xticklabels(degrees)
-        ax.set_yticklabels([_format_reg_label(reg_type, str_val) for str_val in strengths])
+        ax.set_yticklabels(
+            [_format_reg_label(reg_type, str_val) for str_val in strengths]
+        )
 
         ax.set_xlabel("Polynomial Degree")
         ax.set_ylabel("Regularization Strength")
@@ -1563,7 +1603,11 @@ class RegressionVisualizer:
             title,
             "Heatmap",
             wf_norm,
-            {"selected_degree": best_degree, "selected_regularization_strength": best_strength, "regularization": reg_type},
+            {
+                "selected_degree": best_degree,
+                "selected_regularization_strength": best_strength,
+                "regularization": reg_type,
+            },
             "holdout_results.csv"
             if wf_norm == "holdout"
             else "kfold_summary_results.csv",

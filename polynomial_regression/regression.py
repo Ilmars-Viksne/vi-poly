@@ -112,7 +112,7 @@ class PolynomialRegressor:
             reg_strength = regularization_strength
 
         if not isinstance(reg_type, str):
-            raise ValueError(
+            raise TypeError(
                 f"Regularization type must be a string, got {type(reg_type).__name__}."
             )
 
@@ -164,7 +164,7 @@ class PolynomialRegressor:
             )
 
         if not isinstance(l1_initialization, str):
-            raise ValueError(
+            raise TypeError(
                 f"L1 initialization must be a string, got {type(l1_initialization).__name__}."
             )
 
@@ -212,9 +212,7 @@ class PolynomialRegressor:
     @property
     def l2_lambda(self) -> float:
         if self.regularization != REGULARIZATION_L2:
-            raise AttributeError(
-                "l2_lambda is available only for L2 models."
-            )
+            raise AttributeError("l2_lambda is available only for L2 models.")
         return self.regularization_strength
 
     def _validate_fit_inputs(
@@ -317,9 +315,9 @@ class PolynomialRegressor:
             iterations = None
             converged = True
             max_coeff_change = None
-            final_obj = 0.5 * float(np.sum((X_arr @ beta - y_arr) ** 2)) + 0.5 * strength * float(
-                np.sum(beta[1:] ** 2)
-            )
+            final_obj = 0.5 * float(
+                np.sum((X_arr @ beta - y_arr) ** 2)
+            ) + 0.5 * strength * float(np.sum(beta[1:] ** 2))
         elif requested_reg == REGULARIZATION_L1:
             effective_reg = REGULARIZATION_L1
             solver_used = "coordinate_descent_l1"
@@ -332,7 +330,7 @@ class PolynomialRegressor:
             else:  # 'ols'
                 beta, _, _, _ = np.linalg.lstsq(X_arr, y_arr, rcond=None)
 
-            col_norm_sq = np.sum(X_arr ** 2, axis=0)
+            col_norm_sq = np.sum(X_arr**2, axis=0)
             residual = y_arr - X_arr @ beta
             converged = False
             last_max_change = 0.0
@@ -349,14 +347,11 @@ class PolynomialRegressor:
                         if j == 0:
                             new_beta_j = rho / denom
                         else:
-                            new_beta_j = (
-                                soft_threshold(rho, strength) / denom
-                            )
+                            new_beta_j = soft_threshold(rho, strength) / denom
                         residual -= X_arr[:, j] * new_beta_j
 
                     change = abs(new_beta_j - beta[j])
-                    if change > max_change:
-                        max_change = change
+                    max_change = max(max_change, change)
                     beta[j] = new_beta_j
 
                 last_max_change = max_change
@@ -376,9 +371,9 @@ class PolynomialRegressor:
                     UserWarning,
                 )
 
-            final_obj = 0.5 * float(np.sum((X_arr @ beta - y_arr) ** 2)) + strength * float(
-                np.sum(np.abs(beta[1:]))
-            )
+            final_obj = 0.5 * float(
+                np.sum((X_arr @ beta - y_arr) ** 2)
+            ) + strength * float(np.sum(np.abs(beta[1:])))
         else:
             raise ValueError(f"Unhandled regularization type '{requested_reg}'.")
 
@@ -408,9 +403,7 @@ class PolynomialRegressor:
             raise FloatingPointError("Final objective value is non-finite.")
 
         nonzero_count = int(
-            np.count_nonzero(
-                np.abs(beta[1:]) > self.coefficient_zero_tolerance
-            )
+            np.count_nonzero(np.abs(beta[1:]) > self.coefficient_zero_tolerance)
         )
 
         self.beta = beta

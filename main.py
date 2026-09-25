@@ -57,7 +57,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
     # 2. Regularization type validation & deprecated option handling
     reg = getattr(args, "regularization", REGULARIZATION_L2)
     if not isinstance(reg, str):
-        raise ValueError(f"Regularization type must be a string; received {type(reg)}.")
+        raise TypeError(f"Regularization type must be a string; received {type(reg)}.")
     norm_reg = reg.strip().lower()
     if norm_reg not in SUPPORTED_REGULARIZATIONS:
         raise ValueError(
@@ -66,16 +66,19 @@ def _validate_configuration(args: argparse.Namespace) -> None:
 
     l2_vals_provided = hasattr(args, "l2_values") and args.l2_values is not None
     reg_vals_provided = (
-        hasattr(args, "regularization_values") and args.regularization_values is not None
+        hasattr(args, "regularization_values")
+        and args.regularization_values is not None
     )
 
     if l2_vals_provided and reg_vals_provided:
-        raise ValueError(
-            "Cannot specify both --l2-values and --regularization-values."
-        )
+        raise ValueError("Cannot specify both --l2-values and --regularization-values.")
 
     if l2_vals_provided:
-        if hasattr(args, "regularization_explicit") and args.regularization_explicit and norm_reg != REGULARIZATION_L2:
+        if (
+            hasattr(args, "regularization_explicit")
+            and args.regularization_explicit
+            and norm_reg != REGULARIZATION_L2
+        ):
             raise ValueError(
                 f"--l2-values cannot be used with --regularization '{norm_reg}'. Use --regularization-values instead."
             )
@@ -150,7 +153,7 @@ def _validate_configuration(args: argparse.Namespace) -> None:
 
     l1_init = getattr(args, "l1_initialization", DEFAULT_L1_INITIALIZATION)
     if not isinstance(l1_init, str):
-        raise ValueError(
+        raise TypeError(
             f"L1 initialization must be a string; received {type(l1_init)}."
         )
     norm_l1_init = l1_init.strip().lower()

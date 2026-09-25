@@ -4,18 +4,17 @@ import json
 import pathlib
 import tempfile
 import unittest
-import warnings
 
 import numpy as np
 import pytest
 
-from main import parse_args, run_pipeline, validate_args
+from main import parse_args, run_pipeline
 from polynomial_regression.features import PolynomialFeatureTransformer
 from polynomial_regression.regression import (
     PolynomialRegressor,
     soft_threshold,
 )
-from polynomial_regression.selection import HoldoutModelSelector, KFoldModelSelector
+from polynomial_regression.selection import HoldoutModelSelector
 
 
 class TestSoftThreshold(unittest.TestCase):
@@ -63,7 +62,9 @@ class TestL1Regressor(unittest.TestCase):
     def test_l1_zero_strength_matches_ols(self):
         x = np.linspace(-2, 2, 30)
         y = 2.0 - x + 3.0 * x**2
-        X = PolynomialFeatureTransformer(degree=2, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=2, scale_features=False).fit_transform(
+            x
+        )
 
         reg_l1_zero = PolynomialRegressor(
             regularization="l1", regularization_strength=0.0
@@ -71,7 +72,9 @@ class TestL1Regressor(unittest.TestCase):
 
         reg_ols = PolynomialRegressor(regularization="none").fit(X, y)
 
-        np.testing.assert_allclose(reg_l1_zero.beta, reg_ols.beta, rtol=1e-10, atol=1e-10)
+        np.testing.assert_allclose(
+            reg_l1_zero.beta, reg_ols.beta, rtol=1e-10, atol=1e-10
+        )
         self.assertEqual(reg_l1_zero.fit_details.solver_used, "lstsq_ols")
         self.assertEqual(reg_l1_zero.fit_details.requested_regularization, "l1")
         self.assertEqual(reg_l1_zero.fit_details.effective_regularization, "none")
@@ -79,11 +82,13 @@ class TestL1Regressor(unittest.TestCase):
     def test_unregularized_intercept(self):
         x = np.linspace(-1, 1, 100)
         y = 50.0 + 2.0 * x
-        X = PolynomialFeatureTransformer(degree=1, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=1, scale_features=False).fit_transform(
+            x
+        )
 
-        reg = PolynomialRegressor(
-            regularization="l1", regularization_strength=1e4
-        ).fit(X, y)
+        reg = PolynomialRegressor(regularization="l1", regularization_strength=1e4).fit(
+            X, y
+        )
 
         # Intercept beta[0] should remain ~50.0, slope beta[1] should be driven to 0.0
         np.testing.assert_allclose(reg.beta[0], 50.0, atol=1e-2)
@@ -124,7 +129,9 @@ class TestL1Regressor(unittest.TestCase):
     def test_l1_non_convergence_warning(self):
         x = np.linspace(-2, 2, 50)
         y = np.sin(x)
-        X = PolynomialFeatureTransformer(degree=5, scale_features=False).fit_transform(x)
+        X = PolynomialFeatureTransformer(degree=5, scale_features=False).fit_transform(
+            x
+        )
 
         with pytest.warns(UserWarning, match="L1 coordinate descent did not converge"):
             reg = PolynomialRegressor(
@@ -138,6 +145,9 @@ class TestL1Regressor(unittest.TestCase):
         self.assertEqual(reg.fit_details.iterations, 1)
 
 
+@pytest.mark.filterwarnings(
+    "ignore:L1 regularization is sensitive to feature scale.*:UserWarning"
+)
 class TestCLIRegularizationOptions(unittest.TestCase):
     def test_regularization_cli_options(self):
         parsed = parse_args(
@@ -220,6 +230,9 @@ class TestL1SelectionAndEndToEnd(unittest.TestCase):
         lines = ["X,Y"] + [f"{xi},{yi}" for xi, yi in zip(x, y)]
         self.csv_file.write_text("\n".join(lines), encoding="utf-8")
 
+    @pytest.mark.filterwarnings(
+        "ignore:L1 coordinate descent did not converge.*:UserWarning"
+    )
     def test_all_non_converged_candidates_raises_runtime_error(self):
         x = np.linspace(-3, 3, 50)
         y = x**3 - x
@@ -240,6 +253,12 @@ class TestL1SelectionAndEndToEnd(unittest.TestCase):
             selector.select(x, y, train_idx, val_idx, test_idx, dev_idx)
         self.assertIn("No L1 candidate converged", str(ctx.exception))
 
+    @pytest.mark.filterwarnings(
+        "ignore:L1 regularization is sensitive to feature scale.*:UserWarning"
+    )
+    @pytest.mark.filterwarnings(
+        "ignore:L1 coordinate descent did not converge.*:UserWarning"
+    )
     def test_end_to_end_combinations(self):
         modes = ["holdout", "kfold", "both"]
         regs = ["none", "l1", "l2"]

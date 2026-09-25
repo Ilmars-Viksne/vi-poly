@@ -191,7 +191,9 @@ class HoldoutModelSelector:
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
         if l2_lambdas is not None and regularization_strengths is not None:
-            raise ValueError("Cannot specify both l2_lambdas and regularization_strengths.")
+            raise ValueError(
+                "Cannot specify both l2_lambdas and regularization_strengths."
+            )
 
         strengths = (
             l2_lambdas
@@ -203,7 +205,11 @@ class HoldoutModelSelector:
             )
         )
 
-        norm_reg = regularization.strip().lower() if isinstance(regularization, str) else regularization
+        norm_reg = (
+            regularization.strip().lower()
+            if isinstance(regularization, str)
+            else regularization
+        )
         if norm_reg not in SUPPORTED_REGULARIZATIONS:
             raise ValueError(
                 f"Unsupported regularization type '{regularization}'. Supported choices: {sorted(SUPPORTED_REGULARIZATIONS)}."
@@ -413,7 +419,9 @@ class KFoldModelSelector:
         max_degree: int = DEFAULT_MAX_DEGREE,
     ):
         if l2_lambdas is not None and regularization_strengths is not None:
-            raise ValueError("Cannot specify both l2_lambdas and regularization_strengths.")
+            raise ValueError(
+                "Cannot specify both l2_lambdas and regularization_strengths."
+            )
 
         strengths = (
             l2_lambdas
@@ -425,7 +433,11 @@ class KFoldModelSelector:
             )
         )
 
-        norm_reg = regularization.strip().lower() if isinstance(regularization, str) else regularization
+        norm_reg = (
+            regularization.strip().lower()
+            if isinstance(regularization, str)
+            else regularization
+        )
         if norm_reg not in SUPPORTED_REGULARIZATIONS:
             raise ValueError(
                 f"Unsupported regularization type '{regularization}'. Supported choices: {sorted(SUPPORTED_REGULARIZATIONS)}."
@@ -559,9 +571,13 @@ class KFoldModelSelector:
                     r_squared=float(np.std(fold_r2s, ddof=0)),
                 )
 
-                converged_fold_count = sum(1 for c in fold_converged_list if c is not False)
+                converged_fold_count = sum(
+                    1 for c in fold_converged_list if c is not False
+                )
                 cand_converged = converged_fold_count == len(folds)
-                mean_iters = float(np.mean(fold_iters_list)) if fold_iters_list else None
+                mean_iters = (
+                    float(np.mean(fold_iters_list)) if fold_iters_list else None
+                )
                 max_iters = max(fold_iters_list) if fold_iters_list else None
                 mean_nonzeros = float(np.mean(fold_nonzeros_list))
 

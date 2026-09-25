@@ -6,6 +6,7 @@ import pathlib
 import unittest
 
 import numpy as np
+import pytest
 
 from main import parse_args, run_pipeline, validate_args
 from polynomial_regression.data import CSVDataLoader
@@ -13,6 +14,9 @@ from polynomial_regression.reporting import _validate_equal_lengths
 from polynomial_regression.selection import HoldoutModelSelector
 
 
+@pytest.mark.filterwarnings(
+    "ignore:--l2-values is deprecated; use --regularization-values instead.:DeprecationWarning"
+)
 class TestCLIValidation(unittest.TestCase):
     """Unit tests for CLI argument validation and boundary cases."""
 
@@ -129,6 +133,9 @@ class TestCLIValidation(unittest.TestCase):
         self.assertIn("Number of folds must be at least 2", str(ctx.exception))
 
 
+@pytest.mark.filterwarnings(
+    "ignore:--l2-values is deprecated; use --regularization-values instead.:DeprecationWarning"
+)
 class TestSearchGridCanonicalization(unittest.TestCase):
     """Tests for deduplication and sorting of degree and L2 search grids."""
 
@@ -240,6 +247,9 @@ class TestCSVProvenance(unittest.TestCase):
         self.assertIn("equal lengths", str(ctx.exception))
 
 
+@pytest.mark.filterwarnings(
+    "ignore:--l2-values is deprecated; use --regularization-values instead.:DeprecationWarning"
+)
 class TestEndToEndPriority3(unittest.TestCase):
     """End-to-end integration tests verifying metadata and CSV outputs."""
 

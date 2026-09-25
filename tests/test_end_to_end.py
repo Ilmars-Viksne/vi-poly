@@ -13,6 +13,9 @@ from main import parse_args, run_pipeline
 from polynomial_regression.regression import PolynomialRegressor
 
 
+@pytest.mark.filterwarnings(
+    "ignore:--l2-values is deprecated; use --regularization-values instead.:DeprecationWarning"
+)
 class TestEndToEndCLI(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -94,6 +97,9 @@ class TestEndToEndCLI(unittest.TestCase):
         self.assertFalse((out_dir / "holdout").exists())
         self.assertFalse((out_dir / "comparison.json").exists())
 
+    @pytest.mark.filterwarnings(
+        "ignore:L1 regularization is sensitive to feature scale.*:UserWarning"
+    )
     def test_end_to_end_both_mode_and_manifest_uniqueness(self):
         out_dir = self.temp_path / "results_both"
         args = parse_args(
